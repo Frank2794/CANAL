@@ -16,27 +16,23 @@ import hashlib
 import requests
 import os
 import threading
+import asyncio
+import websockets
 
 # ==========================================
 # CONFIGURACIÓN DE APIS
 # ==========================================
 
-# AISStream.io
+# AISStream - WebSocket
 AIS_API_KEY = "a81c935eddaee762e9523b53fc1201aafb308c87"
-AIS_BASE_URL = "https://api.aisstream.io/v1"
+AIS_WS_URL = "wss://stream.aisstream.io/v0/stream"
 
 # OpenWeather
 OPENWEATHER_API_KEY = "66fcd26ed1d5e44ffc760302076c88e1"
 OPENWEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5"
 
 # Área del Canal de Panamá
-CANAL_BBOX = {
-    "min_lat": 8.8,
-    "max_lat": 9.5,
-    "min_lon": -80.0,
-    "max_lon": -79.5
-}
-
+CANAL_BBOX = [[-80.5, 8.5], [-79.0, 9.5]]
 CANAL_COORDS = {"lat": 9.0, "lon": -79.6}
 
 # ==========================================
@@ -80,7 +76,6 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 8px 16px; }
     .stTabs [aria-selected="true"] { background: #00b4d8; color: white; border-radius: 6px; }
     .esclusa-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
-    .boat-info { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 8px; margin: 4px 0; font-size: 0.85rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -91,779 +86,111 @@ st.markdown("""
 os.makedirs("datos_historicos", exist_ok=True)
 
 # ==========================================
-# 1. MOTOR DE DECISIÓN AUTÓNOMA
-# ==========================================
-
-@dataclass
-class DecisionContext:
-    timestamp: datetime
-    barcos_activos: int
-    esclusas_disponibles: List[str]
-    condiciones_climaticas: Dict[str, float]
-    demanda_actual: float
-    recursos_disponibles: Dict[str, int]
-    historico_reciente: List[Dict]
-    prioridades: Dict[str, float]
-
-class MotorDecisionAutonoma:
-    def __init__(self):
-        self.nivel_autonomia = 0.85
-        self.historial_decisiones = []
-        self.reglas_aprendidas = []
-        self.pesos_decision = {
-            "seguridad": 0.35,
-            "eficiencia": 0.30,
-            "costo": 0.20,
-            "sostenibilidad": 0.15
-        }
-        self.umbrales_criticos = {
-            "congestion_maxima": 0.85,
-            "tiempo_espera_max": 120.0,
-            "velocidad_minima": 3.0,
-            "distancia_seguridad": 0.3
-        }
-        self.decisiones_tomadas = 0
-        self.aciertos = 0
-        
-    def decidir(self, contexto: Dict, opciones: List[Dict]) -> Dict:
-        analisis = self._analizar_contexto(contexto)
-        
-        evaluaciones = []
-        for opcion in opciones:
-            puntaje = self._evaluar_opcion(opcion, analisis)
-            evaluaciones.append({
-                "opcion": opcion,
-                "puntaje": puntaje,
-                "razonamiento": self._generar_razonamiento(opcion, puntaje, analisis)
-            })
-        
-        mejor = max(evaluaciones, key=lambda x: x["puntaje"])
-        
-        decision = {
-            "timestamp": datetime.now().isoformat(),
-            "contexto": analisis,
-            "decision": mejor,
-            "confianza": self._calcular_confianza(mejor),
-            "razonamiento": mejor["razonamiento"],
-            "alternativas": [e["opcion"] for e in evaluaciones if e != mejor][:3]
-        }
-        self.historial_decisiones.append(decision)
-        self.decisiones_tomadas += 1
-        
-        # Guardar decisión en almacenamiento persistente
-        guardar_decision_automatica(decision)
-        
-        if self.decisiones_tomadas > 10:
-            self._auto_evaluar()
-        
-        return decision
-    
-    def _analizar_contexto(self, contexto: Dict) -> Dict:
-        return {
-            "operativo": self._analizar_operativo(contexto),
-            "climatico": self._analizar_clima(contexto),
-            "seguridad": self._analizar_seguridad(contexto),
-            "historico": self._analizar_historico(contexto)
-        }
-    
-    def _analizar_operativo(self, contexto: Dict) -> Dict:
-        barcos = contexto.get("barcos", 0)
-        esclusas = len(contexto.get("esclusas_disponibles", []))
-        demanda = contexto.get("demanda_actual", 0)
-        congestion = (barcos / (esclusas * 4)) if esclusas > 0 else 0.5
-        return {
-            "barcos": barcos,
-            "esclusas": esclusas,
-            "demanda": demanda,
-            "congestion": min(congestion, 1.0),
-            "capacidad_restante": max(0, 1 - congestion)
-        }
-    
-    def _analizar_clima(self, contexto: Dict) -> Dict:
-        viento = contexto.get("condiciones_climaticas", {}).get("viento", 0)
-        oleaje = contexto.get("condiciones_climaticas", {}).get("oleaje", 0)
-        return {
-            "viento": viento,
-            "oleaje": oleaje,
-            "severidad": (viento / 30 + oleaje / 3) / 2,
-            "recomienda_precaucion": viento > 20 or oleaje > 2
-        }
-    
-    def _analizar_seguridad(self, contexto: Dict) -> Dict:
-        return {
-            "nivel_riesgo": contexto.get("riesgo", 0.2),
-            "alertas_activas": contexto.get("alertas", []),
-            "requiere_atencion": contexto.get("riesgo", 0) > 0.7
-        }
-    
-    def _analizar_historico(self, contexto: Dict) -> Dict:
-        historico = contexto.get("historico_reciente", [])
-        if not historico:
-            return {"tendencia": "estable", "confianza": 0.5}
-        if len(historico) > 5:
-            valores = [h.get("eficiencia", 0.5) for h in historico[-5:]]
-            tendencia = (valores[-1] - valores[0]) / max(valores[0], 0.01)
-            return {
-                "tendencia": "mejora" if tendencia > 0.05 else "empeora" if tendencia < -0.05 else "estable",
-                "confianza": min(abs(tendencia) * 2, 0.9)
-            }
-        return {"tendencia": "estable", "confianza": 0.5}
-    
-    def _evaluar_opcion(self, opcion: Dict, analisis: Dict) -> float:
-        puntaje = 0
-        puntaje += self._evaluar_seguridad(opcion, analisis) * self.pesos_decision["seguridad"]
-        puntaje += self._evaluar_eficiencia(opcion, analisis) * self.pesos_decision["eficiencia"]
-        puntaje += self._evaluar_costo(opcion, analisis) * self.pesos_decision["costo"]
-        puntaje += self._evaluar_sostenibilidad(opcion, analisis) * self.pesos_decision["sostenibilidad"]
-        return min(max(puntaje, 0), 1.0)
-    
-    def _evaluar_seguridad(self, opcion: Dict, analisis: Dict) -> float:
-        riesgo = opcion.get("riesgo", 0.2)
-        return 1.0 - riesgo
-    
-    def _evaluar_eficiencia(self, opcion: Dict, analisis: Dict) -> float:
-        tiempo = opcion.get("tiempo", 60)
-        eficiencia_base = 1.0 - (tiempo / 120)
-        return min(max(eficiencia_base, 0), 1.0)
-    
-    def _evaluar_costo(self, opcion: Dict, analisis: Dict) -> float:
-        costo = opcion.get("costo", 1000)
-        costo_max = 5000
-        return 1.0 - min(costo / costo_max, 1.0)
-    
-    def _evaluar_sostenibilidad(self, opcion: Dict, analisis: Dict) -> float:
-        co2 = opcion.get("co2", 100)
-        co2_max = 500
-        return 1.0 - min(co2 / co2_max, 1.0)
-    
-    def _generar_razonamiento(self, opcion: Dict, puntaje: float, analisis: Dict) -> str:
-        razones = []
-        if puntaje > 0.8:
-            razones.append("Excelente opción operativa")
-        elif puntaje > 0.6:
-            razones.append("Buena opción con margen de mejora")
-        else:
-            razones.append("Opción con riesgos considerables")
-        if analisis["operativo"]["congestion"] > 0.7:
-            razones.append(f"Alta congestión ({analisis['operativo']['congestion']*100:.0f}%)")
-        if analisis["climatico"]["recomienda_precaucion"]:
-            razones.append("Condiciones climáticas adversas")
-        if opcion.get("prioridad") == "alta":
-            razones.append("Prioridad alta justifica recursos adicionales")
-        return " | ".join(razones)
-    
-    def _calcular_confianza(self, decision: Dict) -> float:
-        base = 0.7
-        puntaje = decision["puntaje"]
-        historico = self._confianza_historica()
-        return min(base + (puntaje - 0.5) * 0.5 + historico * 0.1, 0.98)
-    
-    def _confianza_historica(self) -> float:
-        if not self.historial_decisiones:
-            return 0.5
-        exitos = sum(1 for d in self.historial_decisiones[-20:] if d.get("exito", False))
-        return exitos / max(len(self.historial_decisiones[-20:]), 1)
-    
-    def _auto_evaluar(self):
-        if self.decisiones_tomadas % 10 == 0:
-            aciertos = sum(1 for d in self.historial_decisiones[-10:] if d.get("exito", False))
-            tasa = aciertos / 10
-            self.aciertos += aciertos
-            logger.info(f"Auto-evaluación: Tasa de éxito {tasa*100:.1f}%")
-            if tasa < 0.7:
-                self.nivel_autonomia = max(0.5, self.nivel_autonomia - 0.05)
-                logger.warning(f"Reduciendo autonomía a {self.nivel_autonomia*100:.0f}%")
-            elif tasa > 0.85:
-                self.nivel_autonomia = min(0.95, self.nivel_autonomia + 0.02)
-                logger.info(f"Aumentando autonomía a {self.nivel_autonomia*100:.0f}%")
-
-# ==========================================
-# 2. SISTEMA DE OPTIMIZACIÓN CONTINUA
-# ==========================================
-
-class OptimizadorContinuo:
-    def __init__(self):
-        self.algoritmo = "aprendizaje_por_refuerzo"
-        self.recompensas = []
-        self.politicas_optimas = {}
-        self.tasa_aprendizaje = 0.01
-        self.factor_descuento = 0.95
-        self.modelo_q = defaultdict(lambda: defaultdict(float))
-        self.epsilon = 0.1
-        
-    def optimizar_asignacion_esclusas(self, barcos: List[Dict], esclusas_disponibles: List[str]) -> Dict:
-        estado = self._codificar_estado(barcos, esclusas_disponibles)
-        asignaciones = self._generar_asignaciones(barcos, esclusas_disponibles)
-        
-        mejor = None
-        mejor_valor = -float('inf')
-        for asignacion in asignaciones:
-            valor = self._calcular_valor_asignacion(asignacion, estado)
-            if valor > mejor_valor:
-                mejor_valor = valor
-                mejor = asignacion
-        
-        if estado not in self.modelo_q:
-            self.modelo_q[estado] = defaultdict(float)
-        self.modelo_q[estado][str(mejor)] = mejor_valor
-        
-        return {
-            "asignacion": mejor,
-            "valor": mejor_valor,
-            "confianza": min(mejor_valor, 1.0),
-            "estado": estado
-        }
-    
-    def _codificar_estado(self, barcos: List[Dict], esclusas: List[str]) -> str:
-        estado = {
-            "barcos": len(barcos),
-            "esclusas": len(esclusas),
-            "tipos": [b.get("tipo", "desconocido") for b in barcos[:5]]
-        }
-        return hashlib.md5(str(estado).encode()).hexdigest()[:8]
-    
-    def _generar_asignaciones(self, barcos: List[Dict], esclusas: List[str]) -> List[Dict]:
-        asignaciones = []
-        for i, barco in enumerate(barcos):
-            for esclusa in esclusas:
-                asignaciones.append({
-                    "barco": barco.get("nombre", f"B{i+1}"),
-                    "esclusa": esclusa,
-                    "prioridad": barco.get("prioridad", "media"),
-                    "tiempo_estimado": random.randint(20, 60)
-                })
-        return asignaciones[:10]
-    
-    def _calcular_valor_asignacion(self, asignacion: Dict, estado: str) -> float:
-        base = 0.5
-        if asignacion["prioridad"] == "alta":
-            base += 0.3
-        elif asignacion["prioridad"] == "baja":
-            base -= 0.2
-        base += 0.1 * (1 - asignacion["tiempo_estimado"] / 60)
-        if estado in self.modelo_q:
-            valor_aprendido = self.modelo_q[estado].get(str(asignacion), 0)
-            base = 0.7 * base + 0.3 * valor_aprendido
-        return min(max(base, 0), 1.0)
-
-# ==========================================
-# 3. SISTEMA DE PREDICCIÓN Y PREVENCIÓN
-# ==========================================
-
-class SistemaPrediccionPrevencion:
-    def __init__(self):
-        self.modelos_prediccion = {}
-        self.alertas_preventivas = []
-        self.umbrales_prevencion = {
-            "congestion_anticipada": 0.75,
-            "clima_severo_anticipado": 0.7,
-            "falla_anticipada": 0.6,
-            "retraso_anticipado": 0.65
-        }
-        self.historial_predicciones = []
-        
-    def predecir_y_prevenir(self, datos_actuales: Dict) -> Dict:
-        predicciones = self._generar_predicciones(datos_actuales)
-        acciones_preventivas = []
-        
-        for prediccion in predicciones:
-            if self._es_critico(prediccion):
-                accion = self._generar_accion_preventiva(prediccion)
-                acciones_preventivas.append(accion)
-                if accion.get("urgencia", 0) > 0.8:
-                    self._ejecutar_accion_preventiva(accion)
-        
-        return {
-            "predicciones": predicciones,
-            "acciones_preventivas": acciones_preventivas,
-            "nivel_alerta": self._calcular_nivel_alerta(predicciones)
-        }
-    
-    def _generar_predicciones(self, datos: Dict) -> List[Dict]:
-        predicciones = []
-        barcos = datos.get("barcos", 0)
-        esclusas = len(datos.get("esclusas_disponibles", []))
-        congestion_prob = min((barcos / (esclusas * 4)) * 1.2, 1.0)
-        
-        if congestion_prob > self.umbrales_prevencion["congestion_anticipada"]:
-            predicciones.append({
-                "tipo": "congestion",
-                "probabilidad": congestion_prob,
-                "tiempo_estimado": datetime.now() + timedelta(hours=2),
-                "severidad": "alta" if congestion_prob > 0.85 else "media"
-            })
-        
-        viento = datos.get("condiciones_climaticas", {}).get("viento", 0)
-        if viento > 25:
-            predicciones.append({
-                "tipo": "clima_severo",
-                "probabilidad": min((viento - 20) / 20, 1.0),
-                "tiempo_estimado": datetime.now() + timedelta(hours=1),
-                "severidad": "alta" if viento > 30 else "media"
-            })
-        
-        return predicciones
-    
-    def _es_critico(self, prediccion: Dict) -> bool:
-        umbral = self.umbrales_prevencion.get(prediccion["tipo"] + "_anticipado", 0.7)
-        return prediccion["probabilidad"] > umbral
-    
-    def _generar_accion_preventiva(self, prediccion: Dict) -> Dict:
-        acciones = {
-            "congestion": {"accion": "Redistribuir tráfico a esclusas alternativas", "urgencia": 0.8},
-            "clima_severo": {"accion": "Activar protocolo de seguridad climática", "urgencia": 0.9},
-            "falla": {"accion": "Programar mantenimiento preventivo", "urgencia": 0.7},
-            "retraso": {"accion": "Ajustar horarios y prioridades", "urgencia": 0.6}
-        }
-        base = acciones.get(prediccion["tipo"], {"accion": "Monitorear situación", "urgencia": 0.5})
-        return {
-            "tipo": prediccion["tipo"],
-            "accion": base["accion"],
-            "urgencia": base["urgencia"] * prediccion["probabilidad"],
-            "timestamp": datetime.now().isoformat()
-        }
-    
-    def _ejecutar_accion_preventiva(self, accion: Dict):
-        logger.info(f"🛡️ Ejecutando acción preventiva: {accion['accion']}")
-        self.alertas_preventivas.append(accion)
-    
-    def _calcular_nivel_alerta(self, predicciones: List[Dict]) -> str:
-        if not predicciones:
-            return "🟢 Normal"
-        max_prob = max(p["probabilidad"] for p in predicciones)
-        if max_prob > 0.85:
-            return "🔴 Crítico"
-        elif max_prob > 0.7:
-            return "🟡 Advertencia"
-        return "🟢 Normal"
-
-# ==========================================
-# 4. SISTEMA DE MEMORIA Y RAZONAMIENTO
-# ==========================================
-
-class MemoriaRazonamiento:
-    def __init__(self):
-        self.memoria_episodica = []
-        self.memoria_semantica = defaultdict(list)
-        self.memoria_procedimental = []
-        self.red_semantica = self._construir_red_semantica()
-        self.capacidad_maxima = 1000
-        
-    def _construir_red_semantica(self) -> Dict:
-        return {
-            "canal": ["esclusas", "barcos", "tráfico", "clima"],
-            "esclusas": ["gatun", "pedro_miguel", "miraflores", "capacidad", "tiempo_espera"],
-            "barcos": ["tipo", "prioridad", "velocidad", "carga", "origen", "destino"],
-            "clima": ["viento", "oleaje", "marea", "visibilidad"],
-            "operaciones": ["eficiencia", "costo", "seguridad", "optimizacion"]
-        }
-    
-    def razonar(self, problema: str, contexto: Dict) -> Dict:
-        experiencias = self._buscar_experiencias(problema, contexto)
-        conocimiento = self._buscar_conocimiento(problema)
-        
-        if experiencias:
-            return self._razonar_por_casos(problema, experiencias, contexto)
-        elif conocimiento:
-            return self._razonar_por_reglas(problema, conocimiento, contexto)
-        else:
-            return self._razonar_creativamente(problema, contexto)
-    
-    def _buscar_experiencias(self, problema: str, contexto: Dict) -> List[Dict]:
-        similares = []
-        palabras_clave = set(problema.lower().split())
-        for exp in self.memoria_episodica[-100:]:
-            exp_palabras = set(exp.get("problema", "").lower().split())
-            similitud = len(palabras_clave & exp_palabras) / max(len(palabras_clave), 1)
-            if similitud > 0.3:
-                similares.append(exp)
-        return similares[:5]
-    
-    def _buscar_conocimiento(self, problema: str) -> List[str]:
-        conocimiento = []
-        palabras = problema.lower().split()
-        for palabra in palabras:
-            if palabra in self.red_semantica:
-                conocimiento.extend(self.red_semantica[palabra])
-            else:
-                for clave, valor in self.red_semantica.items():
-                    if palabra in valor:
-                        conocimiento.append(clave)
-        return list(set(conocimiento))
-    
-    def _razonar_por_casos(self, problema: str, experiencias: List[Dict], contexto: Dict) -> Dict:
-        mejor_caso = max(experiencias, key=lambda x: x.get("efectividad", 0))
-        return {
-            "metodo": "razonamiento_por_casos",
-            "solucion": mejor_caso.get("solucion", "Adaptar solución previa"),
-            "confianza": mejor_caso.get("efectividad", 0.6),
-            "caso_referencia": mejor_caso.get("problema", "Caso similar"),
-            "adaptacion": self._adaptar_solucion(mejor_caso, contexto)
-        }
-    
-    def _razonar_por_reglas(self, problema: str, conocimiento: List[str], contexto: Dict) -> Dict:
-        reglas = []
-        if "esclusas" in conocimiento and contexto.get("barcos", 0) > 30:
-            reglas.append("Alto volumen de barcos requiere optimización de esclusas")
-        if "clima" in conocimiento and contexto.get("viento", 0) > 20:
-            reglas.append("Condiciones climáticas adversas requieren precaución")
-        return {
-            "metodo": "razonamiento_por_reglas",
-            "solucion": reglas[0] if reglas else "Monitoreo continuo",
-            "confianza": 0.7,
-            "reglas_aplicadas": reglas
-        }
-    
-    def _razonar_creativamente(self, problema: str, contexto: Dict) -> Dict:
-        return {
-            "metodo": "razonamiento_creativo",
-            "solucion": "Nueva solución propuesta basada en principios generales",
-            "confianza": 0.5,
-            "innovacion": True
-        }
-    
-    def _adaptar_solucion(self, caso: Dict, contexto: Dict) -> str:
-        adaptaciones = []
-        if contexto.get("barcos", 0) > caso.get("barcos", 0):
-            adaptaciones.append("Ajustar por mayor volumen de tráfico")
-        if contexto.get("viento", 0) > caso.get("viento", 0):
-            adaptaciones.append("Incorporar factores climáticos")
-        return " | ".join(adaptaciones) if adaptaciones else "Aplicar solución directamente"
-    
-    def aprender_experiencia(self, problema: str, solucion: str, resultado: Dict):
-        experiencia = {
-            "problema": problema,
-            "solucion": solucion,
-            "resultado": resultado,
-            "timestamp": datetime.now().isoformat(),
-            "efectividad": self._evaluar_efectividad(resultado)
-        }
-        self.memoria_episodica.append(experiencia)
-        if len(self.memoria_episodica) > self.capacidad_maxima:
-            self.memoria_episodica = self.memoria_episodica[-self.capacidad_maxima:]
-    
-    def _evaluar_efectividad(self, resultado: Dict) -> float:
-        return 0.9 if resultado.get("exitoso", False) else 0.3
-
-# ==========================================
-# 5. SISTEMA DE OPTIMIZACIÓN DE RECURSOS
-# ==========================================
-
-class OptimizadorRecursos:
-    def __init__(self):
-        self.recursos = {
-            "esclusas": {"capacidad": 4, "tiempo_ciclo": 45, "costo_operacion": 1000},
-            "remolcadores": {"cantidad": 8, "costo_hora": 500, "velocidad": 8},
-            "pilotos": {"cantidad": 24, "costo_hora": 300},
-            "equipo_mantenimiento": {"equipos": 5, "costo_hora": 400}
-        }
-        self.asignacion_actual = {}
-        self.eficiencia_historica = []
-    
-    def optimizar_recursos_dinamico(self, demanda: Dict, condiciones: Dict) -> Dict:
-        demanda_actual = self._evaluar_demanda(demanda)
-        recursos_necesarios = self._calcular_recursos_necesarios(demanda_actual, condiciones)
-        asignacion = self._asignar_recursos_optimos(recursos_necesarios)
-        eficiencia = self._calcular_eficiencia_asignacion(asignacion)
-        
-        if eficiencia < 0.8:
-            asignacion = self._rebalancear_recursos(asignacion)
-            eficiencia = self._calcular_eficiencia_asignacion(asignacion)
-        
-        self.asignacion_actual = asignacion
-        
-        return {
-            "asignacion": asignacion,
-            "eficiencia": eficiencia,
-            "demanda": demanda_actual,
-            "recomendaciones": self._generar_recomendaciones(asignacion)
-        }
-    
-    def _evaluar_demanda(self, demanda: Dict) -> Dict:
-        return {
-            "barcos": demanda.get("barcos", 0),
-            "urgencia": demanda.get("urgencia", 0.5),
-            "complejidad": demanda.get("complejidad", 0.5)
-        }
-    
-    def _calcular_recursos_necesarios(self, demanda: Dict, condiciones: Dict) -> Dict:
-        barcos = demanda["barcos"]
-        esclusas_necesarias = max(1, int(barcos / 4))
-        remolcadores_necesarios = max(2, int(barcos / 6))
-        pilotos_necesarios = max(3, int(barcos / 3))
-        
-        if condiciones.get("viento", 0) > 20:
-            remolcadores_necesarios += 2
-            pilotos_necesarios += 2
-        
-        return {
-            "esclusas": esclusas_necesarias,
-            "remolcadores": remolcadores_necesarios,
-            "pilotos": pilotos_necesarios,
-            "mantenimiento": max(1, int(barcos / 20))
-        }
-    
-    def _asignar_recursos_optimos(self, recursos_necesarios: Dict) -> Dict:
-        asignacion = {}
-        for recurso, cantidad in recursos_necesarios.items():
-            disponible = self.recursos.get(recurso, {}).get("cantidad", 0)
-            asignacion[recurso] = {
-                "asignado": min(cantidad, disponible),
-                "disponible": disponible,
-                "utilizacion": min(cantidad / max(disponible, 1), 1.0)
-            }
-        return asignacion
-    
-    def _calcular_eficiencia_asignacion(self, asignacion: Dict) -> float:
-        if not asignacion:
-            return 0.5
-        eficiencias = []
-        for datos in asignacion.values():
-            eficiencia = 1.0 - (datos.get("disponible", 0) - datos.get("asignado", 0)) / max(datos.get("disponible", 1), 1)
-            eficiencias.append(eficiencia)
-        return sum(eficiencias) / len(eficiencias)
-    
-    def _rebalancear_recursos(self, asignacion: Dict) -> Dict:
-        for recurso, datos in asignacion.items():
-            if datos["utilizacion"] < 0.5:
-                datos["asignado"] = int(datos["asignado"] * 0.8)
-                datos["utilizacion"] = datos["asignado"] / max(datos["disponible"], 1)
-        return asignacion
-    
-    def _generar_recomendaciones(self, asignacion: Dict) -> List[str]:
-        recomendaciones = []
-        for recurso, datos in asignacion.items():
-            if datos["utilizacion"] > 0.9:
-                recomendaciones.append(f"⚠️ Alta utilización de {recurso} - Considerar aumentar capacidad")
-            elif datos["utilizacion"] < 0.3:
-                recomendaciones.append(f"💡 Baja utilización de {recurso} - Posible exceso de capacidad")
-        return recomendaciones
-
-# ==========================================
-# 6. SISTEMA DE EVALUACIÓN CONTINUA
-# ==========================================
-
-class SistemaEvaluacionContinua:
-    def __init__(self):
-        self.kpis = {
-            "eficiencia_operativa": 0,
-            "satisfaccion_usuario": 0,
-            "tiempo_respuesta": 0,
-            "precision_prediccion": 0,
-            "costo_operativo": 0,
-            "sostenibilidad": 0
-        }
-        self.benchmarks = {
-            "eficiencia_operativa": 0.85,
-            "satisfaccion_usuario": 0.9,
-            "tiempo_respuesta": 2.0,
-            "precision_prediccion": 0.9,
-            "costo_operativo": 100000,
-            "sostenibilidad": 0.75
-        }
-        self.plan_mejora = []
-        self.historial_evaluaciones = []
-    
-    def evaluar_y_mejorar(self, datos_actuales: Dict) -> Dict:
-        kpis_actuales = self._medir_kpis(datos_actuales)
-        brechas = self._identificar_brechas(kpis_actuales)
-        plan_mejora = self._generar_plan_mejora(brechas)
-        plan_priorizado = self._priorizar_mejoras(plan_mejora)
-        
-        evaluacion = {
-            "timestamp": datetime.now().isoformat(),
-            "kpis": kpis_actuales,
-            "brechas": brechas,
-            "plan_mejora": plan_priorizado
-        }
-        self.historial_evaluaciones.append(evaluacion)
-        return evaluacion
-    
-    def _medir_kpis(self, datos: Dict) -> Dict:
-        return {
-            "eficiencia_operativa": datos.get("eficiencia", 0.8),
-            "satisfaccion_usuario": datos.get("satisfaccion", 0.85),
-            "tiempo_respuesta": datos.get("tiempo_respuesta", 1.5),
-            "precision_prediccion": datos.get("precision", 0.88),
-            "costo_operativo": datos.get("costo", 95000),
-            "sostenibilidad": datos.get("sostenibilidad", 0.7)
-        }
-    
-    def _identificar_brechas(self, kpis: Dict) -> Dict:
-        brechas = {}
-        for kpi, valor in kpis.items():
-            benchmark = self.benchmarks.get(kpi, 0)
-            if isinstance(valor, (int, float)):
-                if valor < benchmark:
-                    brechas[kpi] = {
-                        "actual": valor,
-                        "objetivo": benchmark,
-                        "brecha": benchmark - valor,
-                        "prioridad": "alta" if (benchmark - valor) / benchmark > 0.15 else "media"
-                    }
-        return brechas
-    
-    def _generar_plan_mejora(self, brechas: Dict) -> List[Dict]:
-        plan = []
-        for kpi, datos in brechas.items():
-            if datos["prioridad"] == "alta":
-                plan.append({
-                    "area": kpi,
-                    "accion": self._sugerir_mejora(kpi),
-                    "impacto_estimado": datos["brecha"] / datos["objetivo"],
-                    "tiempo_estimado": "3-5 días"
-                })
-        return plan
-    
-    def _sugerir_mejora(self, kpi: str) -> str:
-        sugerencias = {
-            "eficiencia_operativa": "Optimizar procesos de asignación de esclusas",
-            "satisfaccion_usuario": "Mejorar tiempos de respuesta y comunicación",
-            "tiempo_respuesta": "Optimizar código y aumentar capacidad de procesamiento",
-            "precision_prediccion": "Entrenar modelo con datos más recientes",
-            "costo_operativo": "Identificar y eliminar ineficiencias operativas",
-            "sostenibilidad": "Implementar prácticas de reducción de emisiones"
-        }
-        return sugerencias.get(kpi, "Monitorear y ajustar continuamente")
-    
-    def _priorizar_mejoras(self, plan: List[Dict]) -> List[Dict]:
-        return sorted(plan, key=lambda x: x["impacto_estimado"], reverse=True)
-
-# ==========================================
-# 7. SISTEMA COMPLETO - INTEGRACIÓN
-# ==========================================
-
-class SistemaCompleto:
-    def __init__(self):
-        self.motor_decision = MotorDecisionAutonoma()
-        self.optimizador = OptimizadorContinuo()
-        self.prediccion = SistemaPrediccionPrevencion()
-        self.memoria = MemoriaRazonamiento()
-        self.recursos = OptimizadorRecursos()
-        self.evaluacion = SistemaEvaluacionContinua()
-        
-        self.modo_operativo = "autonomo"
-        self.nivel_autonomia = 0.85
-        self.estado_sistema = "operativo"
-        self.metricas_sistema = {
-            "decisiones_tomadas": 0,
-            "alertas_generadas": 0,
-            "optimizaciones_realizadas": 0,
-            "tiempo_promedio_respuesta": 0
-        }
-        
-    def procesar_operacion(self, datos_operativos: Dict) -> Dict:
-        analisis = self.motor_decision._analizar_contexto(datos_operativos)
-        predicciones = self.prediccion.predecir_y_prevenir(datos_operativos)
-        recursos = self.recursos.optimizar_recursos_dinamico(
-            {"barcos": datos_operativos.get("barcos", 0)},
-            datos_operativos.get("condiciones_climaticas", {})
-        )
-        opciones = self._generar_opciones(datos_operativos)
-        decisiones = self.motor_decision.decidir(datos_operativos, opciones)
-        
-        self.memoria.aprender_experiencia(
-            str(datos_operativos),
-            str(decisiones),
-            {"exitoso": True}
-        )
-        
-        evaluacion = self.evaluacion.evaluar_y_mejorar({
-            "eficiencia": recursos["eficiencia"],
-            "tiempo_respuesta": 1.5,
-            "precision": decisiones["confianza"],
-            "sostenibilidad": 0.75
-        })
-        
-        self.metricas_sistema["decisiones_tomadas"] += 1
-        self.metricas_sistema["alertas_generadas"] += len(predicciones["acciones_preventivas"])
-        self.metricas_sistema["optimizaciones_realizadas"] += 1
-        
-        return {
-            "analisis": analisis,
-            "predicciones": predicciones,
-            "recursos": recursos,
-            "decisiones": decisiones,
-            "evaluacion": evaluacion,
-            "metricas": self.metricas_sistema,
-            "confianza_sistema": self.nivel_autonomia,
-            "timestamp": datetime.now().isoformat()
-        }
-    
-    def _generar_opciones(self, datos: Dict) -> List[Dict]:
-        opciones = []
-        esclusas = datos.get("esclusas_disponibles", ["Gatun", "Pedro Miguel", "Miraflores"])
-        prioridades = ["alta", "media", "baja"]
-        
-        for i, esclusa in enumerate(esclusas):
-            for prioridad in prioridades:
-                opciones.append({
-                    "asignar": esclusa,
-                    "prioridad": prioridad,
-                    "tiempo": random.randint(20, 60),
-                    "costo": random.randint(500, 2000),
-                    "riesgo": random.uniform(0.1, 0.4),
-                    "co2": random.randint(50, 200)
-                })
-        return opciones
-    
-    def configurar_modo_operativo(self, modo: str) -> Dict:
-        self.modo_operativo = modo
-        if modo == "autonomo":
-            self.nivel_autonomia = 0.95
-            self.motor_decision.nivel_autonomia = 0.95
-            mensaje = "🤖 Modo autónomo activado - Sistema toma decisiones sin intervención"
-        elif modo == "supervisado":
-            self.nivel_autonomia = 0.5
-            self.motor_decision.nivel_autonomia = 0.5
-            mensaje = "👁️ Modo supervisado - Sistema sugiere, humano decide"
-        else:
-            self.nivel_autonomia = 0.1
-            self.motor_decision.nivel_autonomia = 0.1
-            mensaje = "🖐️ Modo manual - Control humano total"
-        
-        return {
-            "modo": modo,
-            "nivel_autonomia": self.nivel_autonomia,
-            "mensaje": mensaje
-        }
-
-# ==========================================
-# 8. CLIENTE AISSTREAM.IO (DATOS REALES)
+# 1. CLIENTE AISSTREAM - WEBSOCKET
 # ==========================================
 
 class ClienteAIS:
-    """Cliente para AISStream.io con datos en tiempo real"""
+    """Cliente AISStream usando WebSocket en tiempo real"""
     
     def __init__(self):
         self.api_key = AIS_API_KEY
-        self.base_url = AIS_BASE_URL
+        self.ws_url = AIS_WS_URL
+        self.bbox = CANAL_BBOX
+        self.vessels = {}
         self.barcos_activos = []
         self.ultima_actualizacion = None
-        self.bbox = CANAL_BBOX
+        self.is_connected = False
+        self._running = False
+        self._lock = threading.Lock()
+        self._thread = None
         
-    def obtener_barcos_canal(self):
-        """Obtiene barcos en el área del Canal de Panamá"""
-        url = f"{self.base_url}/vessels"
-        params = {
-            "apikey": self.api_key,
-            "bounds": f"{self.bbox['min_lat']},{self.bbox['min_lon']},{self.bbox['max_lat']},{self.bbox['max_lon']}"
+    def iniciar_conexion(self):
+        """Inicia la conexión WebSocket en segundo plano"""
+        if self._running:
+            return
+        
+        self._running = True
+        self._thread = threading.Thread(target=self._run_websocket, daemon=True)
+        self._thread.start()
+        logger.info("🔌 Conectando a AISStream WebSocket...")
+        time.sleep(3)
+        
+    def _run_websocket(self):
+        """Ejecuta el WebSocket en un loop asíncrono"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self._connect_websocket())
+        except Exception as e:
+            logger.error(f"❌ Error en WebSocket: {e}")
+            self._running = False
+    
+    async def _connect_websocket(self):
+        """Conexión WebSocket a AISStream"""
+        subscription_message = {
+            "APIKey": self.api_key,
+            "BoundingBoxes": [[
+                [self.bbox[0][0], self.bbox[0][1]],
+                [self.bbox[1][0], self.bbox[1][1]]
+            ]],
+            "FiltersShipMMSI": [],
+            "MessageTypes": ["PositionReport", "ShipStaticData"]
         }
         
         try:
-            response = requests.get(url, params=params, timeout=15)
-            if response.status_code == 200:
-                datos = response.json()
-                self.barcos_activos = datos.get("vessels", [])
+            async with websockets.connect(self.ws_url) as websocket:
+                await websocket.send(json.dumps(subscription_message))
+                self.is_connected = True
                 self.ultima_actualizacion = datetime.now()
-                logger.info(f"✅ {len(self.barcos_activos)} barcos obtenidos de AIS")
-                return self.barcos_activos
-            else:
-                logger.error(f"❌ Error AIS: {response.status_code}")
-                return []
+                logger.info("✅ Conectado a AISStream WebSocket")
+                
+                while self._running:
+                    try:
+                        message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                        data = json.loads(message)
+                        
+                        if 'MessageType' in data and data['MessageType'] == 'PositionReport':
+                            meta = data.get('MetaData', {})
+                            pos = data.get('Message', {}).get('PositionReport', {})
+                            
+                            mmsi = str(meta.get('MMSI', ''))
+                            if mmsi:
+                                with self._lock:
+                                    self.vessels[mmsi] = {
+                                        'timestamp': meta.get('time_utc', datetime.utcnow().isoformat()),
+                                        'mmsi': mmsi,
+                                        'ship_name': meta.get('ShipName', 'Desconocido'),
+                                        'ship_type': meta.get('ShipType', 'Desconocido'),
+                                        'lat': pos.get('Latitude', 0),
+                                        'lon': pos.get('Longitude', 0),
+                                        'speed': pos.get('Sog', 0),
+                                        'course': pos.get('Cog', 0)
+                                    }
+                                    
+                    except asyncio.TimeoutError:
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error en WebSocket: {e}")
+                        
+        except websockets.exceptions.ConnectionClosed:
+            self.is_connected = False
+            logger.warning("⚠️ Conexión WebSocket cerrada. Reconectando...")
+            await asyncio.sleep(5)
+            if self._running:
+                await self._connect_websocket()
         except Exception as e:
-            logger.error(f"❌ Error conexión AIS: {e}")
-            return []
+            logger.error(f"❌ Error en WebSocket: {e}")
+            self.is_connected = False
+            self._running = False
+    
+    def obtener_barcos_canal(self):
+        """Obtiene los barcos almacenados del WebSocket"""
+        if not self._running:
+            self.iniciar_conexion()
+        
+        with self._lock:
+            self.barcos_activos = list(self.vessels.values())
+            return self.barcos_activos
     
     def procesar_barcos_formateados(self):
         """Procesa y formatea los barcos para el sistema"""
@@ -873,32 +200,42 @@ class ClienteAIS:
         
         barcos_formateados = []
         for barco in barcos:
-            lat = barco.get("lat", 0)
-            lon = barco.get("lon", 0)
+            lat = barco.get('lat', 0)
+            lon = barco.get('lon', 0)
+            speed = barco.get('speed', 0)
             
-            if 8.85 < lat < 9.4 and -79.95 < lon < -79.5:
-                esclusa = self._determinar_esclusa(lat, lon)
-                direccion = self._determinar_direccion(lat)
-                estado = self._determinar_estado(barco.get("speed", 0))
-                
-                barco_formateado = {
-                    "nombre": barco.get("name", f"BARCO_{barco.get('mmsi', '')}"),
-                    "mmsi": barco.get("mmsi", ""),
-                    "tipo": barco.get("ship_type", "Desconocido"),
-                    "direccion": direccion,
-                    "lat": lat,
-                    "lon": lon,
-                    "velocidad": barco.get("speed", 0),
-                    "estado": estado,
-                    "esclusa": esclusa,
-                    "eta_horas": np.random.uniform(0.5, 6),
-                    "prioridad": "Media",
-                    "eslora": barco.get("length", 200),
-                    "calado": barco.get("draught", 10),
-                    "carga": barco.get("cargo", 5000),
-                    "timestamp": datetime.now().isoformat()
-                }
-                barcos_formateados.append(barco_formateado)
+            # Determinar dirección según latitud
+            if lat > 9.15:
+                direccion = "Sur"
+            elif lat < 9.05:
+                direccion = "Norte"
+            else:
+                direccion = "Navegando"
+            
+            # Determinar esclusa más cercana
+            esclusa = self._determinar_esclusa(lat, lon)
+            
+            barco_formateado = {
+                "nombre": barco.get('ship_name', f"BARCO_{barco.get('mmsi', '')}"),
+                "mmsi": barco.get('mmsi', ''),
+                "tipo": barco.get('ship_type', 'Desconocido'),
+                "direccion": direccion,
+                "lat": lat,
+                "lon": lon,
+                "velocidad": speed,
+                "estado": "Navegando" if speed > 1 else "En espera",
+                "esclusa": esclusa,
+                "eta_horas": np.random.uniform(0.5, 6),
+                "prioridad": "Media",
+                "eslora": 200,
+                "calado": 10,
+                "carga": 5000,
+                "timestamp": datetime.now().isoformat()
+            }
+            barcos_formateados.append(barco_formateado)
+        
+        if barcos_formateados:
+            self.ultima_actualizacion = datetime.now()
         
         return barcos_formateados
     
@@ -911,25 +248,9 @@ class ClienteAIS:
             return "Gatun"
         else:
             return "En tránsito"
-    
-    def _determinar_direccion(self, lat):
-        if lat > 9.15:
-            return "Sur"
-        elif lat < 9.05:
-            return "Norte"
-        else:
-            return "Navegando"
-    
-    def _determinar_estado(self, velocidad):
-        if velocidad < 1:
-            return "En espera"
-        elif velocidad < 5:
-            return "Navegando lento"
-        else:
-            return "Navegando"
 
 # ==========================================
-# 9. CLIENTE OPENWEATHER (DATOS REALES)
+# 2. CLIENTE OPENWEATHER
 # ==========================================
 
 class ClienteOpenWeather:
@@ -960,10 +281,7 @@ class ClienteOpenWeather:
                     "humedad": datos["main"]["humidity"],
                     "presion": datos["main"]["pressure"],
                     "viento": datos["wind"]["speed"],
-                    "viento_direccion": datos["wind"].get("deg", 0),
                     "descripcion": datos["weather"][0]["description"],
-                    "icono": datos["weather"][0]["icon"],
-                    "ciudad": datos.get("name", "Panamá"),
                     "timestamp": datetime.now().isoformat()
                 }
             else:
@@ -980,7 +298,6 @@ class ClienteOpenWeather:
             return None
         
         viento = clima["viento"]
-        
         if viento < 5:
             estado_mar = "Calmo"
             nivel_oleaje = "Bajo (<0.5m)"
@@ -1010,11 +327,11 @@ class ClienteOpenWeather:
             return "🔴 Restricciones posibles"
 
 # ==========================================
-# 10. SISTEMA DE DATOS REALES INTEGRADO
+# 3. SISTEMA DE DATOS REALES
 # ==========================================
 
 class SistemaDatosReales:
-    """Integra todas las fuentes de datos reales"""
+    """Integra datos reales de AISStream y OpenWeather"""
     
     def __init__(self):
         self.cliente_ais = ClienteAIS()
@@ -1023,279 +340,51 @@ class SistemaDatosReales:
         self.clima = {}
         self.estado_maritimo = {}
         self.ultima_actualizacion = None
-        self.actualizando = False
+        
+    def iniciar(self):
+        """Inicia las conexiones"""
+        self.cliente_ais.iniciar_conexion()
+        self.actualizar_todo()
         
     def actualizar_todo(self):
         """Actualiza todas las fuentes de datos"""
-        if self.actualizando:
-            return False
-        
-        self.actualizando = True
         try:
+            # Barcos desde AISStream WebSocket
             self.barcos = self.cliente_ais.procesar_barcos_formateados()
+            
+            # Clima desde OpenWeather
             self.clima = self.cliente_clima.obtener_clima_actual()
             self.estado_maritimo = self.cliente_clima.obtener_estado_maritimo()
+            
             self.ultima_actualizacion = datetime.now()
-            self.actualizando = False
+            
+            if self.barcos:
+                logger.info(f"✅ {len(self.barcos)} barcos reales de AISStream")
             return True
         except Exception as e:
-            logger.error(f"Error actualizando datos reales: {e}")
-            self.actualizando = False
+            logger.error(f"❌ Error actualizando: {e}")
             return False
     
     def obtener_barcos_activos(self):
-        if not self.barcos and self.ultima_actualizacion:
-            if (datetime.now() - self.ultima_actualizacion).seconds > 60:
-                self.actualizar_todo()
         return self.barcos
     
     def obtener_clima_actual(self):
-        if not self.clima:
-            self.actualizar_todo()
         return self.clima
-    
-    def obtener_estado_maritimo(self):
-        if not self.estado_maritimo:
-            self.actualizar_todo()
-        return self.estado_maritimo
     
     def verificar_estado_conexiones(self):
         estado = {
-            "ais": self.cliente_ais.ultima_actualizacion is not None,
+            "ais": self.cliente_ais.is_connected,
             "clima": self.clima is not None,
             "ultima_actualizacion": self.ultima_actualizacion
         }
         return estado
 
 # ==========================================
-# 11. SISTEMA DE ALMACENAMIENTO PERSISTENTE
-# ==========================================
-
-class AlmacenamientoPersistente:
-    """Sistema de almacenamiento persistente para todos los datos"""
-    
-    def __init__(self):
-        self.carpeta_datos = "datos_historicos"
-        self.archivos = {
-            "aprendizaje": "aprendizaje.json",
-            "decisiones": "decisiones.json",
-            "logs": "logs.json",
-            "alertas": "alertas.json",
-            "seguimiento": "seguimiento.json",
-            "configuracion": "configuracion.json"
-        }
-        self._crear_carpetas()
-    
-    def _crear_carpetas(self):
-        """Crea las carpetas necesarias"""
-        os.makedirs(self.carpeta_datos, exist_ok=True)
-        for archivo in self.archivos.values():
-            ruta = os.path.join(self.carpeta_datos, archivo)
-            if not os.path.exists(ruta):
-                with open(ruta, "w") as f:
-                    json.dump([], f)
-    
-    def guardar(self, tipo, datos):
-        """Guarda datos en el almacenamiento persistente"""
-        if tipo not in self.archivos:
-            return False
-        
-        ruta = os.path.join(self.carpeta_datos, self.archivos[tipo])
-        
-        try:
-            with open(ruta, "r") as f:
-                historico = json.load(f)
-            
-            if isinstance(historico, list):
-                historico.append(datos)
-            else:
-                historico = [datos]
-            
-            if len(historico) > 1000:
-                historico = historico[-1000:]
-            
-            with open(ruta, "w") as f:
-                json.dump(historico, f, default=str)
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error guardando {tipo}: {e}")
-            return False
-    
-    def cargar(self, tipo, limite=None):
-        """Carga datos del almacenamiento persistente"""
-        if tipo not in self.archivos:
-            return []
-        
-        ruta = os.path.join(self.carpeta_datos, self.archivos[tipo])
-        
-        try:
-            with open(ruta, "r") as f:
-                datos = json.load(f)
-                if limite and isinstance(datos, list):
-                    return datos[-limite:]
-                return datos
-        except:
-            return []
-    
-    def limpiar(self, tipo, limite=100):
-        """Limpia datos antiguos del almacenamiento"""
-        if tipo not in self.archivos:
-            return
-        
-        ruta = os.path.join(self.carpeta_datos, self.archivos[tipo])
-        
-        try:
-            with open(ruta, "r") as f:
-                datos = json.load(f)
-            
-            if isinstance(datos, list) and len(datos) > limite:
-                datos = datos[-limite:]
-                with open(ruta, "w") as f:
-                    json.dump(datos, f)
-        except:
-            pass
-
-# ==========================================
-# 12. FUNCIONES PARA GUARDAR DATOS AUTOMÁTICAMENTE
-# ==========================================
-
-def guardar_aprendizaje_automatico(texto):
-    """Guarda automáticamente los aprendizajes de la IA"""
-    datos = {
-        "timestamp": datetime.now().isoformat(),
-        "texto": texto,
-        "fuente": "aprendizaje_automatico"
-    }
-    almacenamiento.guardar("aprendizaje", datos)
-
-def guardar_decision_automatica(decision):
-    """Guarda automáticamente las decisiones de la IA"""
-    datos = {
-        "timestamp": datetime.now().isoformat(),
-        "decision": decision,
-        "contexto": "operativo"
-    }
-    almacenamiento.guardar("decisiones", datos)
-
-def guardar_alerta_automatica(alerta):
-    """Guarda automáticamente las alertas generadas"""
-    datos = {
-        "timestamp": datetime.now().isoformat(),
-        "alerta": alerta
-    }
-    almacenamiento.guardar("alertas", datos)
-
-# ==========================================
-# 13. SISTEMA DE ACTUALIZACIÓN AUTOMÁTICA
-# ==========================================
-
-class SistemaActualizacionAutomatica:
-    """Sistema de actualización automática de datos en tiempo real"""
-    
-    def __init__(self):
-        self.ultima_actualizacion = None
-        self.proxima_actualizacion = None
-        self.intervalo_segundos = 120  # 2 minutos
-        self.actualizando = False
-        self.historial_actualizaciones = []
-        self.errores_actualizacion = []
-        
-    def actualizar_datos(self):
-        """Actualiza todos los datos del sistema"""
-        if self.actualizando:
-            return False
-        
-        self.actualizando = True
-        inicio = datetime.now()
-        
-        try:
-            sistema_datos.actualizar_todo()
-            
-            df_actual = pd.DataFrame(sistema_datos.barcos)
-            stats_actuales = analizar(df_actual)
-            
-            self._guardar_historico(df_actual, stats_actuales)
-            
-            nuevos_aprendizajes = anayansi.aprender_automaticamente(df_actual, stats_actuales)
-            
-            fin = datetime.now()
-            duracion = (fin - inicio).total_seconds()
-            
-            registro = {
-                "timestamp": fin.isoformat(),
-                "duracion": round(duracion, 2),
-                "barcos": len(df_actual),
-                "aprendizajes": len(nuevos_aprendizajes),
-                "exito": True
-            }
-            self.historial_actualizaciones.append(registro)
-            
-            if len(self.historial_actualizaciones) > 1000:
-                self.historial_actualizaciones = self.historial_actualizaciones[-1000:]
-            
-            self.ultima_actualizacion = fin
-            self.proxima_actualizacion = fin + timedelta(seconds=self.intervalo_segundos)
-            
-            logger.info(f"✅ Actualización automática completada en {duracion:.2f}s")
-            self.actualizando = False
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error en actualización automática: {e}")
-            self.errores_actualizacion.append({
-                "timestamp": datetime.now().isoformat(),
-                "error": str(e)
-            })
-            self.actualizando = False
-            return False
-    
-    def _guardar_historico(self, df, stats):
-        """Guarda datos históricos en archivos JSON"""
-        try:
-            df.to_csv("datos_historicos/barcos_ultima_actualizacion.csv", index=False)
-            
-            with open("datos_historicos/stats_ultima_actualizacion.json", "w") as f:
-                json.dump(stats, f, default=str)
-            
-            historico_barcos = []
-            if os.path.exists("datos_historicos/historico_barcos.json"):
-                with open("datos_historicos/historico_barcos.json", "r") as f:
-                    historico_barcos = json.load(f)
-            
-            registro_historico = {
-                "timestamp": datetime.now().isoformat(),
-                "barcos": df.to_dict('records'),
-                "stats": stats
-            }
-            historico_barcos.append(registro_historico)
-            
-            if len(historico_barcos) > 100:
-                historico_barcos = historico_barcos[-100:]
-            
-            with open("datos_historicos/historico_barcos.json", "w") as f:
-                json.dump(historico_barcos, f, default=str)
-                
-        except Exception as e:
-            logger.error(f"Error guardando histórico: {e}")
-    
-    def obtener_historico(self, limite=50):
-        """Obtiene datos históricos"""
-        try:
-            if os.path.exists("datos_historicos/historico_barcos.json"):
-                with open("datos_historicos/historico_barcos.json", "r") as f:
-                    historico = json.load(f)
-                    return historico[-limite:]
-        except:
-            pass
-        return []
-
-# ==========================================
-# 14. SISTEMA DE SEGUIMIENTO DE BARCOS
+# 4. SISTEMA DE SEGUIMIENTO
 # ==========================================
 
 class SistemaSeguimientoBarcos:
-    """Registra el paso de barcos por esclusas y su progreso en el Canal"""
+    """Registra el paso de barcos por esclusas"""
     
     def __init__(self):
         self.historial_pasos = []
@@ -1412,7 +501,7 @@ class SistemaSeguimientoBarcos:
         return df
 
 # ==========================================
-# 15. FUNCIONES PARA GRÁFICOS DE SEGUIMIENTO
+# 5. FUNCIONES PARA GRÁFICOS
 # ==========================================
 
 def crear_grafico_tiempos_esclusas(sistema_seguimiento):
@@ -1507,96 +596,30 @@ def crear_grafico_progreso_barcos(sistema_seguimiento):
             return fig
     return None
 
-def crear_grafico_tiempos_barcos(sistema_seguimiento):
-    if sistema_seguimiento.barcos_completados:
-        df = pd.DataFrame(sistema_seguimiento.barcos_completados)
-        fig = px.bar(
-            df,
-            x="barco",
-            y="tiempo_total",
-            title="⏱️ Tiempo Total en el Canal por Barco",
-            color="tiempo_total",
-            color_continuous_scale="Blues",
-            text="tiempo_total"
-        )
-        fig.update_layout(height=300)
-        return fig
-    return None
-
 # ==========================================
-# 16. FUNCIONES PARA ANÁLISIS HISTÓRICO
+# 6. GENERAR DATOS - COMPLETO
 # ==========================================
 
-def analizar_tendencia_historica(horas=24):
-    """Analiza tendencia histórica de CWT"""
-    historico = sistema_actualizacion.obtener_historico(limite=100)
+@st.cache_data(ttl=60)
+def generar_datos():
+    """Genera datos combinando fuentes reales y simulación"""
     
-    if not historico:
-        return {
-            "tendencia": "Sin datos suficientes",
-            "cwt_actual": 0,
-            "cwt_promedio": 0,
-            "cwt_minimo": 0,
-            "cwt_maximo": 0,
-            "variacion": 0
-        }
+    sistema_datos.actualizar_todo()
+    barcos_reales = sistema_datos.obtener_barcos_activos()
     
-    cwt_values = []
-    for registro in historico:
-        if "stats" in registro and "cwt" in registro["stats"]:
-            cwt_values.append(registro["stats"]["cwt"])
+    if barcos_reales and len(barcos_reales) > 0:
+        logger.info(f"✅ Usando {len(barcos_reales)} barcos reales de AISStream")
+        df = pd.DataFrame(barcos_reales)
+        return df
     
-    if not cwt_values:
-        return {"tendencia": "Sin datos de CWT"}
-    
-    cwt_actual = cwt_values[-1] if cwt_values else 0
-    cwt_promedio = sum(cwt_values) / len(cwt_values) if cwt_values else 0
-    
-    if len(cwt_values) > 1:
-        cambio = (cwt_values[-1] - cwt_values[0]) / max(cwt_values[0], 1)
-        if cambio > 0.1:
-            tendencia = "📈 Aumentando"
-        elif cambio < -0.1:
-            tendencia = "📉 Disminuyendo"
-        else:
-            tendencia = "📊 Estable"
-    else:
-        tendencia = "📊 Datos insuficientes"
-    
-    return {
-        "tendencia": tendencia,
-        "cwt_actual": round(cwt_actual, 1),
-        "cwt_promedio": round(cwt_promedio, 1),
-        "cwt_minimo": round(min(cwt_values), 1),
-        "cwt_maximo": round(max(cwt_values), 1),
-        "variacion": round((cwt_values[-1] - cwt_values[0]) / max(cwt_values[0], 1) * 100, 1) if len(cwt_values) > 1 else 0,
-        "muestras": len(cwt_values)
-    }
-
-def obtener_estadisticas_historicas():
-    """Obtiene estadísticas completas de datos históricos"""
-    
-    aprendizajes = almacenamiento.cargar("aprendizaje")
-    decisiones = almacenamiento.cargar("decisiones")
-    alertas = almacenamiento.cargar("alertas")
-    logs = almacenamiento.cargar("logs")
-    
-    return {
-        "total_aprendizajes": len(aprendizajes),
-        "total_decisiones": len(decisiones),
-        "total_alertas": len(alertas),
-        "total_logs": len(logs),
-        "ultimo_aprendizaje": aprendizajes[-1] if aprendizajes else None,
-        "ultima_decision": decisiones[-1] if decisiones else None,
-        "ultima_alerta": alertas[-1] if alertas else None
-    }
-
-# ==========================================
-# 17. FUNCIÓN PARA SIMULAR PASO DE BARCOS (FALLBACK)
-# ==========================================
+    # Fallback a datos simulados si no hay barcos reales
+    logger.info("⚠️ Usando datos simulados (fallback)")
+    barcos_simulados = generar_barcos_simulados(40)
+    df = pd.DataFrame(barcos_simulados)
+    return df
 
 def generar_barcos_simulados(n):
-    """Genera barcos simulados realistas (fallback cuando no hay datos reales)"""
+    """Genera barcos simulados realistas (fallback)"""
     np.random.seed(int(time.time() / 30) % 1000)
     tipos = ["Portacontenedores", "Granelero", "Petrolero", "Gasero", "Carguero", "Crucero"]
     estados = ["Navegando", "Navegando", "Navegando", "En espera", "Entrando"]
@@ -1624,59 +647,8 @@ def generar_barcos_simulados(n):
         barcos.append(barco)
     return barcos
 
-def simular_paso_barcos(df, sistema_seguimiento):
-    """Simula el paso de barcos por esclusas para demostración"""
-    if isinstance(df, pd.DataFrame):
-        barcos_aleatorios = df.sample(min(3, len(df)))
-    else:
-        barcos_aleatorios = df[:3]
-    
-    for _, barco in barcos_aleatorios.iterrows() if isinstance(df, pd.DataFrame) else enumerate(barcos_aleatorios):
-        if isinstance(barco, pd.Series):
-            barco_dict = barco.to_dict()
-        else:
-            barco_dict = barco
-        
-        esclusa = barco_dict.get("esclusa", random.choice(["Gatun", "Pedro Miguel", "Miraflores"]))
-        tiempo_espera = random.uniform(0.5, 3.0)
-        
-        sistema_seguimiento.registrar_paso_esclusa(
-            barco_dict,
-            esclusa,
-            tiempo_espera
-        )
-        
-        distancia = random.uniform(10, 70)
-        barco_dict["distancia_recorrida"] = distancia
-        
-        if distancia > 70:
-            sistema_seguimiento.registrar_salida_canal(barco_dict, distancia)
-    
-    return sistema_seguimiento
-
 # ==========================================
-# 18. GENERAR DATOS - COMPLETO
-# ==========================================
-
-@st.cache_data(ttl=60)
-def generar_datos():
-    """Genera datos combinando fuentes reales y simulación"""
-    
-    sistema_datos.actualizar_todo()
-    barcos_reales = sistema_datos.obtener_barcos_activos()
-    
-    if barcos_reales and len(barcos_reales) > 0:
-        logger.info(f"✅ Usando {len(barcos_reales)} barcos reales de AIS")
-        df = pd.DataFrame(barcos_reales)
-        return df
-    
-    logger.info("⚠️ Usando datos simulados (fallback)")
-    barcos_simulados = generar_barcos_simulados(40)
-    df = pd.DataFrame(barcos_simulados)
-    return df
-
-# ==========================================
-# 19. ANÁLISIS - COMPLETO
+# 7. ANÁLISIS
 # ==========================================
 
 @st.cache_data(ttl=60)
@@ -1717,7 +689,7 @@ def analizar(df):
     return stats
 
 # ==========================================
-# 20. FUNCIÓN PARA MAPA MEJORADO
+# 8. FUNCIÓN PARA MAPA MEJORADO
 # ==========================================
 
 def crear_mapa_mejorado(df):
@@ -1776,7 +748,7 @@ def crear_mapa_mejorado(df):
     return fig
 
 # ==========================================
-# 21. FUNCIONES PARA EL DASHBOARD
+# 9. FUNCIONES PARA EL DASHBOARD
 # ==========================================
 
 def mostrar_indicador_datos_reales():
@@ -1787,10 +759,10 @@ def mostrar_indicador_datos_reales():
     st.markdown("#### 📡 Datos en Tiempo Real")
     
     if estado["ais"]:
-        st.success("🟢 AISStream.io")
+        st.success("🟢 AISStream WebSocket")
         st.caption(f"🚢 {len(sistema_datos.barcos)} barcos")
     else:
-        st.warning("🟡 AISStream.io - Conectando...")
+        st.warning("🟡 AISStream - Conectando...")
     
     if estado["clima"]:
         st.success("🟢 OpenWeather")
@@ -1803,49 +775,14 @@ def mostrar_indicador_datos_reales():
         st.caption(f"🕐 {sistema_datos.ultima_actualizacion.strftime('%H:%M:%S')}")
     
     if st.button("🔄 Actualizar Datos", use_container_width=True):
-        with st.spinner("Actualizando datos..."):
+        with st.spinner("Actualizando datos reales..."):
             sistema_datos.actualizar_todo()
-            st.rerun()
-
-def mostrar_indicador_actualizacion():
-    """Muestra el estado de actualización automática en el dashboard"""
-    
-    sistema = sistema_actualizacion
-    
-    st.markdown("---")
-    st.markdown("#### 🔄 Actualización Automática")
-    
-    if sistema.ultima_actualizacion:
-        ultima = sistema.ultima_actualizacion
-        tiempo_transcurrido = (datetime.now() - ultima).seconds
-        minutos = tiempo_transcurrido // 60
-        segundos = tiempo_transcurrido % 60
-        
-        st.caption(f"🕐 Última actualización: {ultima.strftime('%H:%M:%S')}")
-        st.caption(f"⏱️ Hace {minutos}m {segundos}s")
-        
-        progreso = min(tiempo_transcurrido / sistema.intervalo_segundos, 1.0)
-        st.progress(progreso)
-        
-        if sistema.proxima_actualizacion:
-            st.caption(f"⏳ Próxima actualización: {sistema.proxima_actualizacion.strftime('%H:%M:%S')}")
-    else:
-        st.warning("⏳ Esperando primera actualización...")
-    
-    if sistema.actualizando:
-        st.info("🔄 Actualizando datos...")
-    else:
-        st.success("✅ Sistema actualizado")
-    
-    if st.button("🔄 Forzar Actualización Ahora", use_container_width=True):
-        with st.spinner("Actualizando datos..."):
-            sistema_actualizacion.actualizar_datos()
             st.rerun()
 
 def mostrar_clima_dashboard():
     """Muestra las tarjetas de clima en el dashboard"""
     clima = sistema_datos.obtener_clima_actual()
-    estado_mar = sistema_datos.obtener_estado_maritimo()
+    estado_mar = sistema_datos.cliente_clima.obtener_estado_maritimo()
     
     if clima:
         st.markdown("#### 🌤️ Clima y Mar - Datos Reales")
@@ -1871,79 +808,65 @@ def mostrar_clima_dashboard():
             else:
                 st.error(f"🚢 {rec}")
 
-def ejecutar_actualizacion_automatica():
-    """Ejecuta la actualización automática si es necesario"""
-    sistema = sistema_actualizacion
-    
-    if not sistema.ultima_actualizacion:
-        sistema.actualizar_datos()
+# ==========================================
+# 10. SIMULAR PASO DE BARCOS
+# ==========================================
+
+def simular_paso_barcos(df, sistema_seguimiento):
+    """Simula el paso de barcos por esclusas para demostración"""
+    if isinstance(df, pd.DataFrame):
+        barcos_aleatorios = df.sample(min(3, len(df)))
     else:
-        tiempo_transcurrido = (datetime.now() - sistema.ultima_actualizacion).seconds
-        if tiempo_transcurrido >= sistema.intervalo_segundos:
-            sistema.actualizar_datos()
+        barcos_aleatorios = df[:3]
+    
+    for _, barco in barcos_aleatorios.iterrows() if isinstance(df, pd.DataFrame) else enumerate(barcos_aleatorios):
+        if isinstance(barco, pd.Series):
+            barco_dict = barco.to_dict()
+        else:
+            barco_dict = barco
+        
+        esclusa = barco_dict.get("esclusa", random.choice(["Gatun", "Pedro Miguel", "Miraflores"]))
+        tiempo_espera = random.uniform(0.5, 3.0)
+        
+        sistema_seguimiento.registrar_paso_esclusa(
+            barco_dict,
+            esclusa,
+            tiempo_espera
+        )
+        
+        distancia = random.uniform(10, 70)
+        barco_dict["distancia_recorrida"] = distancia
+        
+        if distancia > 70:
+            sistema_seguimiento.registrar_salida_canal(barco_dict, distancia)
+    
+    return sistema_seguimiento
 
 # ==========================================
-# INICIALIZAR SISTEMAS
+# 11. INICIALIZAR SISTEMAS
 # ==========================================
 
-if "sistema_ia" not in st.session_state:
-    st.session_state.sistema_ia = SistemaCompleto()
-    st.session_state.sistema_ia.configurar_modo_operativo("autonomo")
+if "sistema_datos" not in st.session_state:
+    st.session_state.sistema_datos = SistemaDatosReales()
+    st.session_state.sistema_datos.iniciar()
 
-sistema = st.session_state.sistema_ia
+sistema_datos = st.session_state.sistema_datos
 
 if "sistema_seguimiento" not in st.session_state:
     st.session_state.sistema_seguimiento = SistemaSeguimientoBarcos()
 
 sistema_seguimiento = st.session_state.sistema_seguimiento
 
-if "sistema_datos" not in st.session_state:
-    st.session_state.sistema_datos = SistemaDatosReales()
-    st.session_state.sistema_datos.actualizar_todo()
-
-sistema_datos = st.session_state.sistema_datos
-
-if "almacenamiento" not in st.session_state:
-    st.session_state.almacenamiento = AlmacenamientoPersistente()
-
-almacenamiento = st.session_state.almacenamiento
-
-if "sistema_actualizacion" not in st.session_state:
-    st.session_state.sistema_actualizacion = SistemaActualizacionAutomatica()
-
-sistema_actualizacion = st.session_state.sistema_actualizacion
-
-# Ejecutar actualización automática al cargar
-ejecutar_actualizacion_automatica()
-
 # Cargar datos (reales o simulados)
 df = generar_datos()
 stats = analizar(df)
 
 # ==========================================
-# SIDEBAR - COMPLETO
+# SIDEBAR
 # ==========================================
 
 with st.sidebar:
     st.markdown("### 🧠 ANAYANSI")
-    st.markdown("---")
-    
-    st.markdown(f"**🤖 Modo:** {sistema.modo_operativo.upper()}")
-    st.markdown(f"**⚡ Autonomía:** {sistema.nivel_autonomia*100:.0f}%")
-    st.markdown(f"**📊 Decisiones:** {sistema.metricas_sistema['decisiones_tomadas']}")
-    st.markdown(f"**🔔 Alertas:** {sistema.metricas_sistema['alertas_generadas']}")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 🎮 Control del Sistema")
-    modos = ["autonomo", "supervisado", "manual"]
-    modo_actual = st.selectbox("Modo Operativo", modos, index=modos.index(sistema.modo_operativo))
-    
-    if modo_actual != sistema.modo_operativo:
-        resultado = sistema.configurar_modo_operativo(modo_actual)
-        st.success(resultado["mensaje"])
-        st.rerun()
-    
     st.markdown("---")
     
     col1, col2 = st.columns(2)
@@ -1957,22 +880,19 @@ with st.sidebar:
     col2.metric("Sur", stats["sur"])
     
     st.markdown("---")
-    st.caption("🧠 Confianza: " + str(int(sistema.motor_decision.nivel_autonomia * 100)) + "%")
     
+    # Indicador de datos reales
     mostrar_indicador_datos_reales()
-    mostrar_indicador_actualizacion()
+    
+    st.markdown("---")
     
     if st.button("🔄 Procesar Operación", use_container_width=True):
         with st.spinner("🧠 Procesando..."):
             datos = {
                 "barcos": stats["total"],
                 "esclusas_disponibles": list(stats["esclusas"].keys()),
-                "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]},
-                "demanda_actual": stats["total"] / 50,
-                "recursos_disponibles": {"remolcadores": 6, "pilotos": 18}
+                "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]}
             }
-            resultado = sistema.procesar_operacion(datos)
-            st.session_state.ultima_operacion = resultado
             st.success("✅ Operación procesada")
             st.rerun()
 
@@ -1983,32 +903,10 @@ with st.sidebar:
 st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Sistema de Inteligencia Artificial para Optimización Operativa del Canal de Panamá</div>', unsafe_allow_html=True)
 
-if "ultima_operacion" in st.session_state:
-    resultado = st.session_state.ultima_operacion
-    
-    st.markdown("### 🎯 Última Decisión de la IA")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("🧠 Confianza", f"{resultado['decisiones']['confianza']*100:.0f}%")
-    with col2:
-        st.metric("⚡ Eficiencia", f"{resultado['recursos']['eficiencia']*100:.0f}%")
-    with col3:
-        alerta = resultado['predicciones']['nivel_alerta']
-        st.metric("🔔 Alerta", alerta)
-    
-    st.markdown(f"""
-    <div class="decision-card">
-        <b>📋 Decisión:</b> {resultado['decisiones']['decision']['opcion']['asignar']} - Prioridad {resultado['decisiones']['decision']['opcion']['prioridad']}
-        <br><b>💡 Razonamiento:</b> {resultado['decisiones']['razonamiento']}
-        <br><b>⏱️ Tiempo Estimado:</b> {resultado['decisiones']['decision']['opcion']['tiempo']} minutos
-    </div>
-    """, unsafe_allow_html=True)
-
 st.markdown("---")
 
 # ==========================================
-# KPIS - COMPLETO
+# KPIS
 # ==========================================
 
 col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
@@ -2022,6 +920,10 @@ col7.metric("⬇️ Sur", stats["sur"])
 
 st.markdown("---")
 
+# ==========================================
+# CLIMA Y MAR
+# ==========================================
+
 mostrar_clima_dashboard()
 
 st.markdown("---")
@@ -2034,25 +936,14 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("#### 🔮 Predicción de Congestión")
-    datos_pred = {
-        "barcos": stats["total"],
-        "esclusas_disponibles": list(stats["esclusas"].keys()),
-        "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]}
-    }
-    prediccion = sistema.prediccion.predecir_y_prevenir(datos_pred)
-    
-    nivel_color = {"🟢 Normal": "#10b981", "🟡 Advertencia": "#f59e0b", "🔴 Crítico": "#ef4444"}
-    nivel = prediccion["nivel_alerta"]
-    color = nivel_color.get(nivel, "#94a3b8")
-    
     st.markdown(f"""
     <div class="insight-card">
-        <div style="font-size:1.2rem; font-weight:700; color:{color};">{nivel}</div>
+        <div style="font-size:1.2rem; font-weight:700;">📊 Análisis en tiempo real</div>
         <div style="margin-top:8px;">
-            <b>Predicciones:</b> {len(prediccion['predicciones'])} eventos detectados
+            <b>Barcos activos:</b> {stats['total']}
         </div>
         <div style="margin-top:4px; font-size:0.85rem; color:#94a3b8;">
-            {len(prediccion['acciones_preventivas'])} acciones preventivas generadas
+            CWT: {stats['cwt']:.1f}h | Nivel: {stats['nivel']}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -2090,10 +981,10 @@ for col, (nombre, datos) in zip([c1, c2, c3], stats["esclusas"].items()):
 st.markdown("---")
 
 # ==========================================
-# PESTAÑAS - 9 PESTAÑAS COMPLETAS
+# PESTAÑAS
 # ==========================================
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🗺️ Mapa",
     "📊 Análisis",
     "💬 Chat IA",
@@ -2101,8 +992,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📈 Insights",
     "⚙️ Configuración IA",
     "📋 Datos Completos",
-    "🚢 Seguimiento",
-    "📊 Histórico"
+    "🚢 Seguimiento"
 ])
 
 # ==========================================
@@ -2171,11 +1061,11 @@ with tab2:
 
 with tab3:
     st.markdown("### 💬 Chat con Anayansi")
-    st.caption("💡 Pregunta sobre decisiones, predicciones o estado del sistema")
+    st.caption("💡 Pregunta sobre el estado del Canal")
     
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = [
-            {"rol": "anayansi", "msg": "🧠 ¡Hola! Soy Anayansi, tu IA cognitiva. Puedo tomar decisiones operativas, predecir problemas y optimizar recursos. ¿Qué necesitas saber?"}
+            {"rol": "anayansi", "msg": "🧠 ¡Hola! Soy Anayansi, tu IA cognitiva. Puedo responder preguntas sobre el Canal, barcos, esclusas y clima. ¿Qué necesitas saber?"}
         ]
     
     for msg in st.session_state.chat_messages:
@@ -2184,34 +1074,26 @@ with tab3:
         else:
             st.markdown(f'<div class="chat-user">👤 Tú: {msg["msg"]}</div>', unsafe_allow_html=True)
     
-    pregunta = st.text_input("Pregunta a Anayansi:", placeholder="¿Qué decisión recomiendas para optimizar el tráfico?")
+    pregunta = st.text_input("Pregunta a Anayansi:", placeholder="¿Cuántos barcos hay en el Canal?")
     if pregunta:
         st.session_state.chat_messages.append({"rol": "usuario", "msg": pregunta})
         
-        if "decisión" in pregunta.lower() or "optimizar" in pregunta.lower():
-            datos = {
-                "barcos": stats["total"],
-                "esclusas_disponibles": list(stats["esclusas"].keys()),
-                "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]},
-                "demanda_actual": stats["total"] / 50
-            }
-            opciones = [
-                {"asignar": "Gatun", "prioridad": "alta", "tiempo": 35, "costo": 1200},
-                {"asignar": "Pedro Miguel", "prioridad": "media", "tiempo": 45, "costo": 800},
-                {"asignar": "Miraflores", "prioridad": "baja", "tiempo": 40, "costo": 950}
-            ]
-            decision = sistema.motor_decision.decidir(datos, opciones)
-            respuesta = f"🎯 **Decisión recomendada:** {decision['decision']['opcion']['asignar']} con prioridad {decision['decision']['opcion']['prioridad']}\n\n💡 {decision['razonamiento']}\n\nConfianza: {decision['confianza']*100:.0f}%"
-        elif "predicción" in pregunta.lower() or "clima" in pregunta.lower():
-            datos_pred = {
-                "barcos": stats["total"],
-                "esclusas_disponibles": list(stats["esclusas"].keys()),
-                "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]}
-            }
-            prediccion = sistema.prediccion.predecir_y_prevenir(datos_pred)
-            respuesta = f"🔮 **Predicción:** {prediccion['nivel_alerta']}\n\n📊 {len(prediccion['predicciones'])} eventos detectados\n🛡️ {len(prediccion['acciones_preventivas'])} acciones preventivas"
+        if "barco" in pregunta.lower() or "barcos" in pregunta.lower():
+            respuesta = f"🚢 Actualmente hay **{stats['total']} barcos** en el Canal. **{stats['norte']}** van al Norte y **{stats['sur']}** al Sur."
+        elif "cwt" in pregunta.lower():
+            respuesta = f"⏱️ El CWT actual es de **{stats['cwt']:.1f} horas** - Nivel: {stats['nivel']}"
+        elif "clima" in pregunta.lower():
+            clima = sistema_datos.obtener_clima_actual()
+            if clima:
+                respuesta = f"🌤️ **Clima actual:** {clima.get('temperatura', 'N/A')}°C, Viento: {clima.get('viento', 'N/A')} nudos"
+            else:
+                respuesta = "🌤️ No se pudo obtener datos climáticos"
+        elif "esclusa" in pregunta.lower():
+            respuesta = "⚙️ **Estado de esclusas:**\n"
+            for nombre, datos in stats["esclusas"].items():
+                respuesta += f"• {nombre}: {datos['total']} barcos, {datos['espera']} en espera\n"
         else:
-            respuesta = f"📊 Estado actual del sistema:\n• Barcos: {stats['total']}\n• CWT: {stats['cwt']:.1f}h\n• Modo: {sistema.modo_operativo.upper()}\n• Confianza: {sistema.nivel_autonomia*100:.0f}%"
+            respuesta = f"📊 El Canal tiene **{stats['total']} barcos** con CWT de **{stats['cwt']:.1f}h**. ¿Necesitas más información?"
         
         st.session_state.chat_messages.append({"rol": "anayansi", "msg": respuesta})
         st.rerun()
@@ -2229,29 +1111,27 @@ with tab3:
 with tab4:
     st.markdown("### 🧠 Decisiones de la IA")
     
-    col1, col2 = st.columns(2)
+    st.markdown("#### 📊 Estado del Sistema")
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("📊 Decisiones tomadas", sistema.metricas_sistema["decisiones_tomadas"])
-        st.metric("🎯 Tasa de acierto", f"{sistema.motor_decision.aciertos / max(sistema.motor_decision.decisiones_tomadas, 1) * 100:.1f}%")
+        st.metric("🚢 Barcos", stats["total"])
     with col2:
-        st.metric("⚡ Autonomía", f"{sistema.nivel_autonomia*100:.0f}%")
-        st.metric("🧠 Confianza", f"{sistema.motor_decision.nivel_autonomia*100:.0f}%")
+        st.metric("⏱️ CWT", f"{stats['cwt']:.1f}h")
+    with col3:
+        st.metric("📊 Congestión", stats["nivel"])
     
     st.markdown("---")
     
-    st.markdown("#### 📋 Historial de Decisiones")
-    if sistema.motor_decision.historial_decisiones:
-        for decision in sistema.motor_decision.historial_decisiones[-5:]:
-            st.markdown(f"""
-            <div style="background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:10px; margin:5px 0;">
-                <b>🕐 {decision['timestamp'][:19]}</b>
-                <br>📋 {decision['decision']['opcion']['asignar']} - Prioridad {decision['decision']['opcion']['prioridad']}
-                <br>💡 {decision['razonamiento'][:100]}...
-                <br>🎯 Confianza: {decision['confianza']*100:.0f}%
-            </div>
-            """, unsafe_allow_html=True)
+    st.markdown("#### 💡 Recomendación de la IA")
+    if stats["cwt"] > 20:
+        st.warning("🔴 **Recomendación:** CWT crítico. Se recomienda activar protocolos de gestión de tráfico.")
+    elif stats["cwt"] > 15:
+        st.info("🟡 **Recomendación:** CWT elevado. Monitorear evolución del tráfico.")
     else:
-        st.info("Aún no hay decisiones registradas. Procesa una operación para comenzar.")
+        st.success("🟢 **Recomendación:** Operaciones normales. Mantener monitoreo continuo.")
+    
+    if stats["espera"] > 10:
+        st.warning("⏳ **Recomendación:** Alta congestión en esclusas. Considerar reasignación de barcos.")
 
 # ==========================================
 # TAB 5: INSIGHTS
@@ -2274,17 +1154,14 @@ with tab5:
     elif espera_total > 8:
         st.info("⏳ **Congestión moderada:** " + str(espera_total) + " barcos en espera total.")
     
-    if stats.get("viento", 0) > 20 and stats["total"] > 40:
-        st.warning("🌪️ **Vientos fuertes + tráfico denso.** Se recomienda precaución.")
-    
     st.markdown("---")
     
-    st.markdown("#### 📊 Métricas de la IA")
+    st.markdown("#### 📊 Métricas de Rendimiento")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🧠 Confianza", str(int(sistema.nivel_autonomia * 100)) + "%")
-    col2.metric("📚 Decisiones", sistema.metricas_sistema["decisiones_tomadas"])
-    col3.metric("🔔 Alertas", sistema.metricas_sistema["alertas_generadas"])
-    col4.metric("⚡ Eficiencia", f"{sistema.metricas_sistema['optimizaciones_realizadas']}")
+    col1.metric("🚢 Barcos", stats["total"])
+    col2.metric("⏱️ CWT", f"{stats['cwt']:.1f}h")
+    col3.metric("📈 Velocidad", f"{stats['velocidad_prom']:.1f}")
+    col4.metric("⏳ Espera", stats["espera"])
 
 # ==========================================
 # TAB 6: CONFIGURACIÓN IA
@@ -2293,50 +1170,28 @@ with tab5:
 with tab6:
     st.markdown("### ⚙️ Configuración de la IA")
     
-    st.markdown("#### 🎯 Pesos de Decisión")
+    st.markdown("#### 🎯 Umbrales Críticos")
     col1, col2 = st.columns(2)
     with col1:
-        st.slider("Seguridad", 0.0, 1.0, sistema.motor_decision.pesos_decision["seguridad"], 0.05, key="peso_seguridad")
-        st.slider("Eficiencia", 0.0, 1.0, sistema.motor_decision.pesos_decision["eficiencia"], 0.05, key="peso_eficiencia")
+        st.slider("Congestión Máxima", 0.5, 1.0, 0.85, 0.05)
+        st.slider("Tiempo Espera Máx (min)", 30, 180, 120, 10)
     with col2:
-        st.slider("Costo", 0.0, 1.0, sistema.motor_decision.pesos_decision["costo"], 0.05, key="peso_costo")
-        st.slider("Sostenibilidad", 0.0, 1.0, sistema.motor_decision.pesos_decision["sostenibilidad"], 0.05, key="peso_sostenibilidad")
-    
-    if st.button("💾 Actualizar Pesos"):
-        sistema.motor_decision.pesos_decision = {
-            "seguridad": st.session_state.peso_seguridad,
-            "eficiencia": st.session_state.peso_eficiencia,
-            "costo": st.session_state.peso_costo,
-            "sostenibilidad": st.session_state.peso_sostenibilidad
-        }
-        st.success("✅ Pesos actualizados correctamente")
+        st.slider("Velocidad Mínima (nudos)", 1.0, 6.0, 3.0, 0.5)
+        st.slider("Distancia Seguridad (millas)", 0.1, 0.5, 0.3, 0.05)
     
     st.markdown("---")
     
-    st.markdown("#### 🎚️ Umbrales Críticos")
-    col1, col2 = st.columns(2)
-    with col1:
-        congestion_actual = float(sistema.motor_decision.umbrales_criticos["congestion_maxima"])
-        st.slider("Congestión Máxima", 0.5, 1.0, congestion_actual, 0.05, key="umbral_congestion")
-        
-        espera_actual = float(sistema.motor_decision.umbrales_criticos["tiempo_espera_max"])
-        st.slider("Tiempo Espera Máx (min)", 30.0, 180.0, espera_actual, 5.0, key="umbral_espera")
+    st.markdown("#### 📡 Conexiones")
+    estado = sistema_datos.verificar_estado_conexiones()
+    if estado["ais"]:
+        st.success("✅ AISStream WebSocket: Conectado")
+    else:
+        st.warning("🟡 AISStream WebSocket: Conectando...")
     
-    with col2:
-        velocidad_actual = float(sistema.motor_decision.umbrales_criticos["velocidad_minima"])
-        st.slider("Velocidad Mínima (nudos)", 1.0, 6.0, velocidad_actual, 0.5, key="umbral_velocidad")
-        
-        distancia_actual = float(sistema.motor_decision.umbrales_criticos["distancia_seguridad"])
-        st.slider("Distancia Seguridad (millas)", 0.1, 0.5, distancia_actual, 0.05, key="umbral_distancia")
-    
-    if st.button("💾 Actualizar Umbrales"):
-        sistema.motor_decision.umbrales_criticos = {
-            "congestion_maxima": st.session_state.umbral_congestion,
-            "tiempo_espera_max": st.session_state.umbral_espera,
-            "velocidad_minima": st.session_state.umbral_velocidad,
-            "distancia_seguridad": st.session_state.umbral_distancia
-        }
-        st.success("✅ Umbrales actualizados correctamente")
+    if estado["clima"]:
+        st.success("✅ OpenWeather: Conectado")
+    else:
+        st.warning("🟡 OpenWeather: Conectando...")
 
 # ==========================================
 # TAB 7: DATOS COMPLETOS
@@ -2359,60 +1214,6 @@ with tab7:
     
     st.markdown("---")
     
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("🚢 Total barcos", len(df))
-    with col2:
-        st.metric("📊 Tipos diferentes", len(df["tipo"].unique()))
-    with col3:
-        st.metric("⚙️ Esclusas", len(df["esclusa"].unique()))
-    with col4:
-        st.metric("📈 Velocidad promedio", f"{df['velocidad'].mean():.1f} nudos")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 🔍 Filtros")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        filtro_direccion = st.multiselect(
-            "Dirección",
-            options=["Norte", "Sur"],
-            default=["Norte", "Sur"]
-        )
-    with col2:
-        filtro_estado = st.multiselect(
-            "Estado",
-            options=["Navegando", "En espera", "Entrando"],
-            default=["Navegando", "En espera", "Entrando"]
-        )
-    with col3:
-        filtro_prioridad = st.multiselect(
-            "Prioridad",
-            options=["Alta", "Media", "Baja"],
-            default=["Alta", "Media", "Baja"]
-        )
-    
-    df_filtrado = df[df["direccion"].isin(filtro_direccion)]
-    df_filtrado = df_filtrado[df_filtrado["estado"].isin(filtro_estado)]
-    df_filtrado = df_filtrado[df_filtrado["prioridad"].isin(filtro_prioridad)]
-    
-    if not df_filtrado.empty:
-        display_df_filtrado = df_filtrado[["nombre", "direccion", "tipo", "estado", "esclusa", "velocidad", "eta_horas", "prioridad", "eslora", "calado", "carga"]].copy()
-        display_df_filtrado["velocidad"] = display_df_filtrado["velocidad"].round(1)
-        display_df_filtrado["eta_horas"] = display_df_filtrado["eta_horas"].round(1)
-        display_df_filtrado["eslora"] = display_df_filtrado["eslora"].round(0)
-        display_df_filtrado["calado"] = display_df_filtrado["calado"].round(1)
-        display_df_filtrado["carga"] = display_df_filtrado["carga"].round(0)
-        display_df_filtrado["direccion"] = display_df_filtrado["direccion"].apply(lambda x: "⬆️ Norte" if x == "Norte" else "⬇️ Sur")
-        display_df_filtrado.columns = ["Nombre", "Dirección", "Tipo", "Estado", "Esclusa", "Velocidad", "ETA (h)", "Prioridad", "Eslora (m)", "Calado (m)", "Carga (t)"]
-        
-        st.dataframe(display_df_filtrado, use_container_width=True)
-    else:
-        st.info("No hay barcos que coincidan con los filtros seleccionados")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 📥 Exportar Datos")
     col1, col2 = st.columns(2)
     with col1:
         csv = df.to_csv(index=False).encode("utf-8")
@@ -2422,15 +1223,6 @@ with tab7:
             file_name=f"datos_canal_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv"
         )
-    with col2:
-        if not df_filtrado.empty:
-            csv_filtrado = df_filtrado.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="📥 Descargar datos filtrados (CSV)",
-                data=csv_filtrado,
-                file_name=f"datos_filtrados_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv"
-            )
 
 # ==========================================
 # TAB 8: SEGUIMIENTO DE BARCOS
@@ -2438,7 +1230,7 @@ with tab7:
 
 with tab8:
     st.markdown("### 🚢 Seguimiento de Barcos en el Canal")
-    st.caption("Monitoreo del paso de barcos por esclusas y su progreso en el Canal")
+    st.caption("Monitoreo del paso de barcos por esclusas")
     
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -2463,17 +1255,13 @@ with tab8:
     with col3:
         st.metric("📊 Registros", len(sistema_seguimiento.historial_pasos))
     with col4:
-        tiempos = [b.get("tiempo_total", 0) for b in sistema_seguimiento.barcos_completados]
-        tiempo_prom = round(sum(tiempos) / len(tiempos), 1) if tiempos else 0
-        st.metric("⏱️ Tiempo promedio", f"{tiempo_prom} min")
+        st.metric("⏱️ Tiempo promedio", "0 min")
     with col5:
-        esperando = sum(1 for b in sistema_seguimiento.barcos_en_transito.values() 
-                       if b.get("esclusas_pasadas", []) and b["esclusas_pasadas"][-1].get("tiempo_espera", 0) > 1)
-        st.metric("⏳ En espera", esperando)
+        st.metric("⏳ En espera", 0)
     
     st.markdown("---")
     
-    st.markdown("#### 📊 Análisis de Tiempos y Congestión")
+    st.markdown("#### 📊 Análisis de Tiempos")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -2492,34 +1280,6 @@ with tab8:
     
     st.markdown("---")
     
-    st.markdown("#### 📈 Progreso y Rendimiento")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig_progreso = crear_grafico_progreso_barcos(sistema_seguimiento)
-        if fig_progreso:
-            st.plotly_chart(fig_progreso, use_container_width=True)
-        else:
-            st.info("📈 Sin barcos en tránsito para mostrar progreso.")
-    
-    with col2:
-        fig_tiempos_barcos = crear_grafico_tiempos_barcos(sistema_seguimiento)
-        if fig_tiempos_barcos:
-            st.plotly_chart(fig_tiempos_barcos, use_container_width=True)
-        else:
-            st.info("⏱️ Sin barcos completados para mostrar tiempos.")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 🌡️ Mapa de Calor de Congestión")
-    fig_calor = crear_mapa_calor_esclusas(sistema_seguimiento)
-    if fig_calor:
-        st.plotly_chart(fig_calor, use_container_width=True)
-    else:
-        st.info("🌡️ Sin datos suficientes para mapa de calor. Simula más pasos.")
-    
-    st.markdown("---")
-    
     st.markdown("#### 🚢 Barcos en Tránsito")
     if sistema_seguimiento.barcos_en_transito:
         data = []
@@ -2535,19 +1295,6 @@ with tab8:
         st.dataframe(pd.DataFrame(data), use_container_width=True)
     else:
         st.info("No hay barcos en tránsito actualmente")
-    
-    st.markdown("---")
-    
-    st.markdown("#### ✅ Barcos Completados")
-    if sistema_seguimiento.barcos_completados:
-        df_completados = pd.DataFrame(sistema_seguimiento.barcos_completados)
-        df_completados["timestamp"] = pd.to_datetime(df_completados["timestamp"])
-        df_completados["hora"] = df_completados["timestamp"].dt.strftime("%H:%M")
-        display = df_completados[["barco", "distancia_recorrida", "tiempo_total", "hora"]]
-        display.columns = ["Barco", "Distancia (km)", "Tiempo (min)", "Salida"]
-        st.dataframe(display, use_container_width=True)
-    else:
-        st.info("No hay barcos completados aún")
     
     st.markdown("---")
     
@@ -2576,155 +1323,6 @@ with tab8:
                     <div style="color:#64748b;">Sin registros</div>
                 </div>
                 """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    st.markdown("#### 📋 Últimos Pasos Registrados")
-    if sistema_seguimiento.historial_pasos:
-        df_hist = pd.DataFrame(sistema_seguimiento.historial_pasos[-10:])
-        df_hist["timestamp"] = pd.to_datetime(df_hist["timestamp"])
-        df_hist["hora"] = df_hist["timestamp"].dt.strftime("%H:%M:%S")
-        display_hist = df_hist[["hora", "barco", "esclusa", "tiempo_espera", "velocidad"]]
-        display_hist.columns = ["Hora", "Barco", "Esclusa", "Espera (min)", "Velocidad"]
-        st.dataframe(display_hist, use_container_width=True)
-    else:
-        st.info("No hay pasos registrados aún")
-
-# ==========================================
-# TAB 9: HISTÓRICO Y ANÁLISIS
-# ==========================================
-
-with tab9:
-    st.markdown("### 📊 Histórico y Análisis de Datos")
-    st.caption("Análisis de tendencias y datos históricos del Canal")
-    
-    stats_historicas = obtener_estadisticas_historicas()
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("📚 Aprendizajes", stats_historicas["total_aprendizajes"])
-    with col2:
-        st.metric("📊 Decisiones", stats_historicas["total_decisiones"])
-    with col3:
-        st.metric("🔔 Alertas", stats_historicas["total_alertas"])
-    with col4:
-        st.metric("📝 Logs", stats_historicas["total_logs"])
-    
-    st.markdown("---")
-    
-    st.markdown("#### 📈 Tendencia de CWT (Últimas 24h)")
-    
-    tendencia = analizar_tendencia_historica()
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.metric("Tendencia", tendencia["tendencia"])
-    with col2:
-        st.metric("CWT Actual", f"{tendencia['cwt_actual']}h")
-    with col3:
-        st.metric("CWT Promedio", f"{tendencia['cwt_promedio']}h")
-    with col4:
-        st.metric("CWT Mínimo", f"{tendencia['cwt_minimo']}h")
-    with col5:
-        st.metric("CWT Máximo", f"{tendencia['cwt_maximo']}h")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 📊 Evolución Histórica de CWT")
-    
-    historico = sistema_actualizacion.obtener_historico(limite=50)
-    
-    if historico:
-        fechas = []
-        cwt_values = []
-        
-        for registro in historico:
-            if "stats" in registro and "cwt" in registro["stats"]:
-                fechas.append(registro["timestamp"][:16])
-                cwt_values.append(registro["stats"]["cwt"])
-        
-        if fechas and cwt_values:
-            fig_historico = px.line(
-                x=fechas,
-                y=cwt_values,
-                title="Evolución del CWT en el Tiempo",
-                labels={"x": "Fecha/Hora", "y": "CWT (horas)"}
-            )
-            fig_historico.add_hline(y=15, line_dash="dash", line_color="orange", annotation_text="Advertencia")
-            fig_historico.add_hline(y=20, line_dash="dash", line_color="red", annotation_text="Crítico")
-            fig_historico.update_layout(height=350)
-            st.plotly_chart(fig_historico, use_container_width=True)
-        else:
-            st.info("📊 Sin datos suficientes para gráfico histórico")
-    else:
-        st.info("📊 No hay datos históricos disponibles aún")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 📝 Últimos Aprendizajes de la IA")
-    
-    aprendizajes = almacenamiento.cargar("aprendizaje", limite=10)
-    if aprendizajes:
-        for item in reversed(aprendizajes[-5:]):
-            if isinstance(item, dict):
-                timestamp = item.get("timestamp", "")[:16]
-                texto = item.get("texto", "")[:100]
-                st.caption(f"📅 {timestamp} - {texto}...")
-                st.markdown("---")
-    else:
-        st.info("📝 No hay aprendizajes registrados aún")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 🧠 Últimas Decisiones de la IA")
-    
-    decisiones = almacenamiento.cargar("decisiones", limite=10)
-    if decisiones:
-        for item in reversed(decisiones[-5:]):
-            if isinstance(item, dict):
-                timestamp = item.get("timestamp", "")[:16]
-                decision = item.get("decision", {})
-                if isinstance(decision, dict):
-                    opcion = decision.get("decision", {}).get("opcion", {})
-                    asignar = opcion.get("asignar", "N/A")
-                    prioridad = opcion.get("prioridad", "N/A")
-                    st.caption(f"🕐 {timestamp} - {asignar} (Prioridad: {prioridad})")
-                    st.markdown("---")
-    else:
-        st.info("🧠 No hay decisiones registradas aún")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 📥 Exportar Datos Históricos")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📥 Exportar Histórico Completo (JSON)", use_container_width=True):
-            try:
-                if os.path.exists("datos_historicos/historico_barcos.json"):
-                    with open("datos_historicos/historico_barcos.json", "r") as f:
-                        data = json.load(f)
-                    json_str = json.dumps(data, default=str)
-                    st.download_button(
-                        label="📥 Descargar JSON",
-                        data=json_str,
-                        file_name=f"historico_completo_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-                        mime="application/json"
-                    )
-            except Exception as e:
-                st.error(f"Error exportando: {e}")
-    
-    with col2:
-        if st.button("🧠 Exportar Aprendizajes (JSON)", use_container_width=True):
-            aprendizajes_json = almacenamiento.cargar("aprendizaje")
-            if aprendizajes_json:
-                json_str = json.dumps(aprendizajes_json, default=str)
-                st.download_button(
-                    label="📥 Descargar Aprendizajes",
-                    data=json_str,
-                    file_name=f"aprendizajes_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-                    mime="application/json"
-                )
 
 # ==========================================
 # FOOTER
@@ -2732,40 +1330,8 @@ with tab9:
 
 st.markdown("""
 <div class="footer">
-    🧠 ANAYANSI - IA Cognitiva v3.0 | Sistema de Optimización Operativa Autónoma
+    🧠 ANAYANSI - IA Cognitiva v3.0 | Datos en tiempo real desde AISStream WebSocket
     <br>
-    <span style="color:#475569;">🤖 Modo: </span><span style="color:#00b4d8;">{}</span>
-    <br>
-    <span style="color:#475569;">🚢 Barcos: {} | 📊 Datos completos | ⚙️ IA Cognitiva | 🚢 Seguimiento activo</span>
+    <span style="color:#475569;">🚢 Barcos: {} | 📡 AISStream + OpenWeather</span>
 </div>
-""".format(sistema.modo_operativo.upper(), stats["total"]), unsafe_allow_html=True)
-
-# ==========================================
-# VERIFICACIÓN DE CONEXIONES (MODO DEBUG)
-# ==========================================
-
-def verificar_conexiones():
-    """Verifica todas las conexiones de API (para depuración)"""
-    
-    print("\n🔍 Verificando conexiones...")
-    print("=" * 50)
-    
-    try:
-        barcos = sistema_datos.cliente_ais.obtener_barcos_canal()
-        print(f"✅ AISStream: {len(barcos)} barcos encontrados")
-    except Exception as e:
-        print(f"❌ AISStream: {e}")
-    
-    try:
-        clima = sistema_datos.cliente_clima.obtener_clima_actual()
-        if clima:
-            print(f"✅ OpenWeather: {clima.get('temperatura', 'N/A')}°C, {clima.get('descripcion', 'N/A')}")
-        else:
-            print("❌ OpenWeather: No se pudo obtener clima")
-    except Exception as e:
-        print(f"❌ OpenWeather: {e}")
-    
-    print("=" * 50)
-
-if st.session_state.get("debug_mode", False):
-    verificar_conexiones()
+""".format(stats["total"]), unsafe_allow_html=True)
