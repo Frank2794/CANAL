@@ -55,6 +55,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 8px 16px; }
     .stTabs [aria-selected="true"] { background: #00b4d8; color: white; border-radius: 6px; }
     .esclusa-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
+    .boat-info { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 8px; margin: 4px 0; font-size: 0.85rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -794,7 +795,7 @@ class SistemaCompleto:
         }
 
 # ==========================================
-# GENERAR DATOS
+# GENERAR DATOS - COMPLETO CON TODAS LAS COLUMNAS
 # ==========================================
 
 @st.cache_data(ttl=30)
@@ -836,7 +837,7 @@ def generar_datos():
     return pd.DataFrame(barcos)
 
 # ==========================================
-# ANÁLISIS
+# ANÁLISIS - COMPLETO
 # ==========================================
 
 @st.cache_data(ttl=30)
@@ -953,7 +954,7 @@ df = st.session_state.df
 stats = st.session_state.stats
 
 # ==========================================
-# SIDEBAR
+# SIDEBAR - COMPLETO
 # ==========================================
 
 with st.sidebar:
@@ -978,9 +979,16 @@ with st.sidebar:
     
     st.markdown("---")
     
+    # KPIs del sidebar
     col1, col2 = st.columns(2)
-    col1.metric("🚢", stats["total"])
-    col2.metric("⏱️", f"{stats['cwt']:.1f}h")
+    col1.metric("🚢 Barcos", stats["total"])
+    col2.metric("⏱️ CWT", f"{stats['cwt']:.1f}h")
+    
+    st.markdown("---")
+    st.markdown("#### ⬆️⬇️ Dirección")
+    col1, col2 = st.columns(2)
+    col1.metric("Norte", stats["norte"])
+    col2.metric("Sur", stats["sur"])
     
     st.markdown("---")
     st.caption("🧠 Confianza: " + str(int(sistema.motor_decision.nivel_autonomia * 100)) + "%")
@@ -1000,7 +1008,7 @@ with st.sidebar:
             st.rerun()
 
 # ==========================================
-# CONTENIDO PRINCIPAL
+# CONTENIDO PRINCIPAL - COMPLETO
 # ==========================================
 
 st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
@@ -1032,16 +1040,32 @@ if "ultima_operacion" in st.session_state:
 st.markdown("---")
 
 # ==========================================
-# KPIS
+# KPIS - COMPLETO
 # ==========================================
 
-col1, col2, col3, col4, col5, col6 = st.columns(6)
+col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 col1.metric("🚢 Barcos", stats["total"])
 col2.metric("⏱️ CWT", f"{stats['cwt']:.1f}h")
 col3.metric("📈 Vel.", f"{stats['velocidad_prom']:.1f}")
 col4.metric("⏳ Espera", stats["espera"])
 col5.metric("⭐ Alta", stats["prioridad_alta"])
-col6.metric("🌊 Oleaje", f"{stats['oleaje']:.1f}m")
+col6.metric("⬆️ Norte", stats["norte"])
+col7.metric("⬇️ Sur", stats["sur"])
+
+st.markdown("---")
+
+# ==========================================
+# CLIMA Y MAR
+# ==========================================
+
+st.markdown("#### 🌤️ Clima y Mar")
+
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("🌡️ Temp", f"{stats['temp']:.1f}°C")
+col2.metric("💨 Viento", f"{stats['viento']:.1f} nudos")
+col3.metric("🌊 Marea", f"{stats['marea']:.1f}m")
+col4.metric("📏 Profundidad", f"{stats['profundidad']:.1f}m")
+col5.metric("🌊 Oleaje", f"{stats['oleaje']:.1f}m")
 
 st.markdown("---")
 
@@ -1077,21 +1101,18 @@ with col1:
     """, unsafe_allow_html=True)
 
 with col2:
-    st.markdown("#### 🌤️ Clima y Mar")
-    st.markdown(f"""
-    <div class="insight-card">
-        <div>🌡️ Temperatura: <strong>{stats['temp']:.1f}°C</strong></div>
-        <div>💨 Viento: <strong>{stats['viento']:.1f}</strong> nudos</div>
-        <div>🌊 Marea: <strong>{stats['marea']:.1f}m</strong></div>
-        <div>📏 Profundidad: <strong>{stats['profundidad']:.1f}m</strong></div>
-        <div>🌊 Oleaje: <strong>{stats['oleaje']:.1f}m</strong></div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("#### 📊 Nivel de Congestión")
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.markdown(f"<h1 style='color:{stats['color']}; text-align:center;'>{stats['nivel']}</h1>", unsafe_allow_html=True)
+    with col2:
+        st.progress(min(stats["cwt"] / 30, 1.0))
+        st.caption(f"CWT: {stats['cwt']:.1f}h | Crítico: 22h | Advertencia: 18h")
 
 st.markdown("---")
 
 # ==========================================
-# ESLUSCAS
+# ESLUSCAS - COMPLETO
 # ==========================================
 
 c1, c2, c3 = st.columns(3)
@@ -1312,7 +1333,6 @@ with tab6:
     st.markdown("#### 🎚️ Umbrales Críticos")
     col1, col2 = st.columns(2)
     with col1:
-        # Convertir a float para consistencia - TODOS LOS VALORES SON FLOAT
         congestion_actual = float(sistema.motor_decision.umbrales_criticos["congestion_maxima"])
         st.slider("Congestión Máxima", 0.5, 1.0, congestion_actual, 0.05, key="umbral_congestion")
         
@@ -1320,7 +1340,6 @@ with tab6:
         st.slider("Tiempo Espera Máx (min)", 30.0, 180.0, espera_actual, 5.0, key="umbral_espera")
     
     with col2:
-        # CORREGIDOS: TODOS los valores son float
         velocidad_actual = float(sistema.motor_decision.umbrales_criticos["velocidad_minima"])
         st.slider("Velocidad Mínima (nudos)", 1.0, 6.0, velocidad_actual, 0.5, key="umbral_velocidad")
         
