@@ -1,211 +1,349 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from datetime import datetime
+import random
+import time
+
+st.set_page_config(
+    page_title="ANAYANSI - Canal Predictor",
+    page_icon="🌊",
+    layout="wide"
+)
+
+st.markdown("""
+<style>
+    .main-header { font-size: 2.5rem; font-weight: 900; color: #00b4d8; }
+    .sub-header { font-size: 1rem; color: #94a3b8; margin-top: -8px; }
+    .metric-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; }
+    .metric-value { font-size: 2rem; font-weight: 700; color: white; }
+    .metric-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
+    .chat-ai { background: rgba(0,150,255,0.1); border-left: 3px solid #00b4d8; padding: 12px; border-radius: 8px; margin: 8px 0; color: #e2e8f0; }
+    .chat-user { background: rgba(15,23,42,0.8); border-left: 3px solid #64748b; padding: 12px; border-radius: 8px; margin: 8px 0; color: #94a3b8; }
+    .footer { text-align: center; color: #475569; padding: 20px 0; border-top: 1px solid #1e293b; margin-top: 20px; }
+    div.stButton > button { background: #00b4d8; color: white; border-radius: 10px; border: none; padding: 0.5rem 1.5rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# SISTEMA ANAYANSI - SIMPLE Y RÁPIDO
+# ==========================================
+
 class AnayansiIA:
-    """Sistema IA completo para el Canal de Panamá con aprendizaje automático"""
-    
     def __init__(self):
-        self.nombre = "Anayansi"
-        self.significado = "Sabiduria del mar"
-        self.version = "3.0"
-        self.confianza = 0.93
         self.aprendizaje = []
         self.logs = []
-        self.patrones = {}
-        self.historial_conversaciones = []
-        self.conocimiento = self._inicializar_conocimiento()
-        self.aprendizaje_automatico = True
-        self.predicciones_previas = []
-        
-    def _inicializar_conocimiento(self):
-        return {
-            "esclusas": {
-                "Gatun": {"capacidad": 3, "nivel_agua": 26.0, "tiempo_prom": 1.5, "estado": "Operativa"},
-                "Pedro Miguel": {"capacidad": 1, "nivel_agua": 13.5, "tiempo_prom": 1.0, "estado": "Operativa"},
-                "Miraflores": {"capacidad": 2, "nivel_agua": 16.5, "tiempo_prom": 1.2, "estado": "Operativa"}
-            },
-            "clima": {
-                "viento_critico": 30,
-                "ola_critica": 3.0,
-                "temperatura_optima": (22, 28),
-                "lluvia_critica": 50
-            },
-            "operaciones": {
-                "max_barcos_espera": 15,
-                "cwt_critico": 22,
-                "tiempo_espera_max": 3
-            }
-        }
     
-    def _registrar_log(self, accion, datos):
-        entrada = {
-            "timestamp": datetime.now().isoformat(),
-            "accion": accion,
-            "datos": datos
-        }
-        self.logs.append(entrada)
-        return entrada
-    
-    # ==========================================
-    # MÉTODO AGREGADO - APRENDIZAJE AUTOMÁTICO
-    # ==========================================
-    
-    def aprender_automaticamente(self, df, stats):
-        """Aprendizaje automático basado en datos actuales"""
-        nuevos_aprendizajes = []
-        
-        # Aprender patrones de tráfico
-        if stats["total"] > 70:
-            nuevo = f"Alto tráfico detectado: {stats['total']} barcos. Recomendar protocolos especiales."
-            self.aprender(nuevo)
-            nuevos_aprendizajes.append(nuevo)
-        
-        if stats["cwt"] > 20:
-            nuevo = f"CWT crítico: {stats['cwt']:.1f}h. Recomendar acciones inmediatas."
-            self.aprender(nuevo)
-            nuevos_aprendizajes.append(nuevo)
-        
-        if stats["espera"] > 12:
-            nuevo = f"Congestión en esclusas: {stats['espera']} barcos en espera."
-            self.aprender(nuevo)
-            nuevos_aprendizajes.append(nuevo)
-        
-        # Aprender patrones climáticos
-        if stats.get("viento_prom", 0) > 20:
-            nuevo = f"Vientos fuertes detectados: {stats['viento_prom']:.1f} nudos. Precaución."
-            self.aprender(nuevo)
-            nuevos_aprendizajes.append(nuevo)
-        
-        # Aprender sobre eficiencia de esclusas
-        for nombre, datos in stats["esclusas"].items():
-            if datos["espera"] > 5:
-                nuevo = f"Esclusa {nombre} con {datos['espera']} barcos en espera. Considerar optimización."
-                self.aprender(nuevo)
-                nuevos_aprendizajes.append(nuevo)
-        
-        return nuevos_aprendizajes
-    
-    def aprender(self, nuevo_conocimiento):
-        self.aprendizaje.append({
-            "fecha": datetime.now().isoformat(),
-            "conocimiento": nuevo_conocimiento
-        })
-        self._registrar_log("aprendizaje", nuevo_conocimiento)
-        return "Anayansi ha aprendido: " + nuevo_conocimiento[:100] + "..."
-    
-    def analizar_barco(self, barco):
-        analisis = {
-            "nombre": barco["nombre"],
-            "tipo": barco["tipo"],
-            "direccion": barco["direccion"],
-            "estado": barco["estado"],
-            "velocidad": barco["velocidad"],
-            "esclusa": barco["esclusa"],
-            "eta": barco["eta_horas"],
-            "prioridad": barco["prioridad"],
-            "analisis": self._generar_analisis_barco(barco)
-        }
-        self._registrar_log("analisis_barco", analisis)
-        return analisis
-    
-    def _generar_analisis_barco(self, barco):
-        resultado = []
-        if barco["velocidad"] < 2:
-            resultado.append("Velocidad muy baja - Posible congestion o espera")
-        elif barco["velocidad"] < 5:
-            resultado.append("Velocidad reducida - Navegando con precaucion")
-        elif barco["velocidad"] > 15:
-            resultado.append("Alta velocidad - Buque prioritario o en ruta exprés")
-        else:
-            resultado.append("Velocidad normal - Navegacion fluida")
-        
-        if barco["estado"] == "En espera en esclusa":
-            resultado.append("En espera - Tiempo estimado de espera: 1-3 horas")
-        elif barco["estado"] == "Entrando a esclusa":
-            resultado.append("Entrando a esclusa - Operacion en curso")
-        else:
-            resultado.append("Navegando - Sin incidencias")
-        
-        if barco["prioridad"] == "Alta":
-            resultado.append("Prioridad Alta - Dar preferencia en esclusas")
-        
-        return " | ".join(resultado)
+    def aprender(self, texto):
+        self.aprendizaje.append({"fecha": datetime.now().isoformat(), "texto": texto})
+        return "Anayansi ha aprendido: " + texto[:50] + "..."
     
     def preguntar(self, pregunta, df, stats):
-        pregunta_lower = pregunta.lower()
-        self._registrar_log("pregunta", pregunta)
-        
-        if "cwt" in pregunta_lower:
-            return f"El CWT actual es de {stats['cwt']:.1f} horas con una congestion {stats['nivel'].lower()}."
-        
-        if "barco" in pregunta_lower:
-            return f"Hay {stats['total']} barcos activos. {stats['norte']} van al Norte y {stats['sur']} al Sur."
-        
-        if "espera" in pregunta_lower:
-            return f"Hay {stats['espera']} barcos en espera en las esclusas."
-        
-        if "velocidad" in pregunta_lower:
-            return f"La velocidad promedio es de {stats['velocidad_prom']:.1f} nudos."
-        
-        if "esclusa" in pregunta_lower:
-            partes = []
+        p = pregunta.lower()
+        if "cwt" in p:
+            return "El CWT actual es de " + str(round(stats["cwt"], 1)) + " horas."
+        if "barco" in p:
+            return "Hay " + str(stats["total"]) + " barcos. " + str(stats["norte"]) + " al Norte y " + str(stats["sur"]) + " al Sur."
+        if "espera" in p:
+            return "Hay " + str(stats["espera"]) + " barcos en espera."
+        if "velocidad" in p:
+            return "Velocidad promedio: " + str(round(stats["velocidad_prom"], 1)) + " nudos."
+        if "esclusa" in p:
+            resultado = ""
             for nombre, datos in stats["esclusas"].items():
-                partes.append(f"{nombre}: {datos['total']} barcos, {datos['espera']} en espera")
-            return " | ".join(partes)
-        
-        if "clima" in pregunta_lower:
-            temp = df["temperatura"].mean() if "temperatura" in df.columns else 25
-            viento = df["viento"].mean() if "viento" in df.columns else 15
-            return f"Temperatura: {temp:.1f}°C, Viento: {viento:.1f} nudos. Condiciones favorables para navegacion."
-        
-        return f"He analizado tu consulta. El Canal opera con {stats['total']} barcos y un CWT de {stats['cwt']:.1f}h."
+                resultado = resultado + nombre + ": " + str(datos["total"]) + " barcos. "
+            return resultado
+        if "clima" in p:
+            return "Condiciones climaticas favorables para la navegacion."
+        return "El Canal tiene " + str(stats["total"]) + " barcos con CWT de " + str(round(stats["cwt"], 1)) + " horas."
     
-    def generar_reporte_completo(self, df, stats):
+    def generar_reporte(self, df, stats):
         lineas = []
-        lineas.append("=" * 80)
-        lineas.append("ANAYANSI - REPORTE EJECUTIVO DEL CANAL DE PANAMA")
-        lineas.append("=" * 80)
-        lineas.append(f"Fecha y hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        lineas.append(f"Version del sistema: {self.version}")
-        lineas.append(f"Nivel de confianza: {int(self.confianza*100)}%")
-        lineas.append(f"Registros de aprendizaje: {len(self.aprendizaje)}")
-        lineas.append("=" * 80)
+        lineas.append("=" * 50)
+        lineas.append("ANAYANSI - REPORTE DEL CANAL")
+        lineas.append("=" * 50)
+        lineas.append("Fecha: " + datetime.now().strftime("%Y-%m-%d %H:%M"))
         lineas.append("")
-        lineas.append("RESUMEN OPERATIVO")
-        lineas.append("-" * 80)
-        lineas.append(f"Barcos activos: {stats['total']}")
-        lineas.append(f"Norte: {stats['norte']} | Sur: {stats['sur']}")
-        lineas.append(f"CWT: {stats['cwt']:.1f} horas ({stats['nivel']})")
-        lineas.append(f"Velocidad promedio: {stats['velocidad_prom']:.1f} nudos")
-        lineas.append(f"Barcos en espera: {stats['espera']}")
-        lineas.append(f"Prioridad Alta: {stats['prioridad_alta']}")
+        lineas.append("RESUMEN:")
+        lineas.append("  Barcos: " + str(stats["total"]))
+        lineas.append("  CWT: " + str(round(stats["cwt"], 1)) + " horas")
+        lineas.append("  Velocidad: " + str(round(stats["velocidad_prom"], 1)) + " nudos")
+        lineas.append("  Espera: " + str(stats["espera"]))
+        lineas.append("  Norte: " + str(stats["norte"]) + " | Sur: " + str(stats["sur"]))
         lineas.append("")
-        lineas.append("ESTADO DE ESLUSCAS")
-        lineas.append("-" * 80)
+        lineas.append("ESCLUSAS:")
         for nombre, datos in stats["esclusas"].items():
-            lineas.append(f"{nombre}:")
-            lineas.append(f"  - Total: {datos['total']} barcos")
-            lineas.append(f"  - En espera: {datos['espera']}")
-            lineas.append(f"  - Norte: {datos['norte']} | Sur: {datos['sur']}")
-            lineas.append(f"  - Eficiencia: {datos['eficiencia']}")
+            lineas.append("  " + nombre + ": " + str(datos["total"]) + " barcos")
         lineas.append("")
-        lineas.append("DISTRIBUCION POR TIPO DE BARCO")
-        lineas.append("-" * 80)
+        lineas.append("TIPOS:")
         for tipo, cantidad in stats["tipos"].items():
-            lineas.append(f"  - {tipo}: {cantidad}")
+            lineas.append("  " + tipo + ": " + str(cantidad))
         lineas.append("")
-        lineas.append("ORIGEN DE BARCOS")
-        lineas.append("-" * 80)
-        for origen, cantidad in stats["origenes"].items():
-            lineas.append(f"  - {origen}: {cantidad}")
-        lineas.append("")
-        lineas.append("=" * 80)
-        lineas.append("PREDICCIONES Y RECOMENDACIONES")
-        lineas.append("=" * 80)
-        lineas.append(f"Prediccion de congestion: {stats['nivel']}")
-        if stats["cwt"] < 18:
-            lineas.append("Recomendacion: Mantener operaciones normales")
-        else:
-            lineas.append("Recomendacion: Activar protocolos de congestion")
-        lineas.append("")
-        lineas.append("ANAYANSI - Sabiduria del mar")
-        lineas.append("=" * 80)
-        
+        lineas.append("=" * 50)
         return "\n".join(lineas)
+
+# ==========================================
+# GENERAR DATOS - RÁPIDO Y SIMPLE
+# ==========================================
+
+@st.cache_data(ttl=30)
+def generar_datos():
+    np.random.seed(int(time.time() / 30) % 1000)
+    n = np.random.randint(40, 70)
+    
+    puntos = [
+        (9.36, -79.92), (9.27, -79.92), (9.20, -79.88),
+        (9.015, -79.62), (8.995, -79.585), (8.90, -79.52)
+    ]
+    
+    tipos = ["Portacontenedores", "Granelero", "Petrolero", "Gasero", "Carguero", "Crucero"]
+    estados = ["Navegando", "Navegando", "Navegando", "En espera", "Entrando"]
+    esclusas = ["Gatun", "Pedro Miguel", "Miraflores"]
+    prioridades = ["Alta", "Media", "Baja"]
+    
+    barcos = []
+    for i in range(n):
+        idx = np.random.randint(0, len(puntos))
+        lat, lon = puntos[idx]
+        lat = lat + np.random.normal(0, 0.02)
+        lon = lon + np.random.normal(0, 0.02)
+        direccion = "Sur" if np.random.random() < 0.5 else "Norte"
+        estado = random.choice(estados)
+        velocidad = np.random.uniform(0, 1) if estado == "En espera" else np.random.uniform(4, 16)
+        barco = {
+            "nombre": "BARCO_" + str(i+1).zfill(4),
+            "tipo": random.choice(tipos),
+            "direccion": direccion,
+            "lat": lat,
+            "lon": lon,
+            "velocidad": velocidad,
+            "estado": estado,
+            "esclusa": random.choice(esclusas),
+            "eta_horas": np.random.uniform(0.5, 8),
+            "prioridad": random.choice(prioridades)
+        }
+        barcos.append(barco)
+    return pd.DataFrame(barcos)
+
+# ==========================================
+# ANALISIS - RÁPIDO
+# ==========================================
+
+def analizar(df):
+    stats = {
+        "total": len(df),
+        "norte": len(df[df["direccion"] == "Norte"]),
+        "sur": len(df[df["direccion"] == "Sur"]),
+        "espera": len(df[df["estado"] == "En espera"]),
+        "prioridad_alta": len(df[df["prioridad"] == "Alta"]),
+        "velocidad_prom": df["velocidad"].mean(),
+        "esclusas": {},
+        "tipos": df["tipo"].value_counts().to_dict()
+    }
+    
+    for e in ["Gatun", "Pedro Miguel", "Miraflores"]:
+        df_e = df[df["esclusa"] == e]
+        stats["esclusas"][e] = {
+            "total": len(df_e),
+            "espera": len(df_e[df_e["estado"] == "En espera"])
+        }
+    
+    stats["cwt"] = 12 + max(0, (stats["total"] - 30) * 0.1) + stats["espera"] * 0.12
+    stats["cwt"] = min(40, max(8, stats["cwt"]))
+    
+    if stats["cwt"] < 14:
+        stats["nivel"] = "Bajo"; stats["color"] = "#10b981"
+    elif stats["cwt"] < 18:
+        stats["nivel"] = "Moderado"; stats["color"] = "#f59e0b"
+    elif stats["cwt"] < 23:
+        stats["nivel"] = "Alto"; stats["color"] = "#f97316"
+    else:
+        stats["nivel"] = "Critico"; stats["color"] = "#ef4444"
+    
+    return stats
+
+# ==========================================
+# INICIALIZAR - UNA SOLA VEZ
+# ==========================================
+
+if "anayansi" not in st.session_state:
+    st.session_state.anayansi = AnayansiIA()
+    st.session_state.chat = [{"rol": "anayansi", "msg": "Hola! Soy Anayansi, IA del Canal de Panama. Preguntame sobre barcos, CWT, esclusas o clima."}]
+    st.session_state.datos_inicializados = True
+
+anayansi = st.session_state.anayansi
+
+# ==========================================
+# CARGAR DATOS - UNA SOLA VEZ
+# ==========================================
+
+df = generar_datos()
+stats = analizar(df)
+st.session_state["df"] = df
+st.session_state["stats"] = stats
+
+# ==========================================
+# SIDEBAR
+# ==========================================
+
+with st.sidebar:
+    st.markdown("### 🌊 ANAYANSI")
+    st.markdown("Sabiduria del mar")
+    st.markdown("---")
+    
+    col1, col2 = st.columns(2)
+    col1.metric("Barcos", stats["total"])
+    col2.metric("CWT", f"{stats['cwt']:.1f}h")
+    
+    st.markdown("---")
+    st.caption("Aprendizaje: " + str(len(anayansi.aprendizaje)) + " registros")
+    
+    if st.button("Actualizar"):
+        st.cache_data.clear()
+        st.rerun()
+
+# ==========================================
+# CONTENIDO PRINCIPAL
+# ==========================================
+
+st.markdown('<h1 class="main-header">🌊 ANAYANSI - Canal Predictor</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Sistema IA para el Canal de Panama</p>', unsafe_allow_html=True)
+
+# ==========================================
+# KPIS
+# ==========================================
+
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("Barcos", stats["total"])
+col2.metric("CWT", f"{stats['cwt']:.1f}h")
+col3.metric("Velocidad", f"{stats['velocidad_prom']:.1f}")
+col4.metric("Espera", stats["espera"])
+col5.metric("Prioridad Alta", stats["prioridad_alta"])
+
+st.markdown("---")
+
+st.markdown("#### Congestion")
+col1, col2 = st.columns([1, 3])
+with col1:
+    st.markdown(f"<h2 style='color:{stats['color']};'>{stats['nivel']}</h2>", unsafe_allow_html=True)
+with col2:
+    st.progress(min(stats["cwt"] / 30, 1.0))
+
+st.markdown("---")
+
+st.markdown("#### Esclusas")
+c1, c2, c3 = st.columns(3)
+for col, (nombre, datos) in zip([c1, c2, c3], stats["esclusas"].items()):
+    with col:
+        st.markdown(f"**{nombre}**")
+        st.write("Total: " + str(datos["total"]))
+        st.write("Espera: " + str(datos["espera"]))
+
+st.markdown("---")
+
+# ==========================================
+# PESTAÑAS
+# ==========================================
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Dashboard", "Mapa", "Analisis", "Chat", "Aprendizaje", "Datos"])
+
+# TAB 1: Dashboard (ya mostrado)
+
+# TAB 2: Mapa
+with tab2:
+    st.markdown("### Mapa")
+    fig = px.scatter_mapbox(
+        df, lat="lat", lon="lon",
+        hover_name="nombre",
+        color="prioridad",
+        color_discrete_map={"Alta": "#ef4444", "Media": "#f59e0b", "Baja": "#10b981"},
+        size="velocidad", size_max=14, zoom=9, height=500
+    )
+    fig.update_layout(mapbox_style="carto-positron", mapbox_center={"lat": 9.15, "lon": -79.75})
+    st.plotly_chart(fig, use_container_width=True)
+
+# TAB 3: Analisis
+with tab3:
+    st.markdown("### Analisis")
+    col1, col2 = st.columns(2)
+    with col1:
+        tipos_df = pd.DataFrame({"Tipo": list(stats["tipos"].keys()), "Cantidad": list(stats["tipos"].values())})
+        fig = px.bar(tipos_df, x="Tipo", y="Cantidad", color="Cantidad", color_continuous_scale="Viridis")
+        fig.update_layout(height=350)
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        st.metric("CWT", f"{stats['cwt']:.1f}h")
+        st.metric("Velocidad", f"{stats['velocidad_prom']:.1f} nudos")
+        st.metric("En Espera", stats["espera"])
+
+# TAB 4: Chat
+with tab4:
+    st.markdown("### Chat con Anayansi")
+    for msg in st.session_state.chat:
+        if msg["rol"] == "anayansi":
+            st.markdown(f'<div class="chat-ai">🌊 Anayansi: {msg["msg"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="chat-user">Tu: {msg["msg"]}</div>', unsafe_allow_html=True)
+    
+    pregunta = st.text_input("Pregunta a Anayansi:", placeholder="Ej: Cual es el CWT actual?")
+    if pregunta:
+        st.session_state.chat.append({"rol": "usuario", "msg": pregunta})
+        respuesta = anayansi.preguntar(pregunta, df, stats)
+        st.session_state.chat.append({"rol": "anayansi", "msg": respuesta})
+        st.rerun()
+    
+    if st.button("Limpiar chat"):
+        st.session_state.chat = [{"rol": "anayansi", "msg": "Hola! Soy Anayansi, IA del Canal de Panama. Preguntame sobre barcos, CWT, esclusas o clima."}]
+        st.rerun()
+
+# TAB 5: Aprendizaje
+with tab5:
+    st.markdown("### Aprendizaje de Anayansi")
+    st.metric("Registros de aprendizaje", len(anayansi.aprendizaje))
+    
+    if anayansi.aprendizaje:
+        st.markdown("#### Ultimos aprendizajes")
+        for item in anayansi.aprendizaje[-5:]:
+            st.caption(item["fecha"][:16] + " - " + item["texto"][:50] + "...")
+    
+    st.markdown("---")
+    st.markdown("#### Ensenar a Anayansi")
+    nuevo = st.text_area("Que quieres que Anayansi aprenda?")
+    if st.button("Ensenar") and nuevo:
+        resultado = anayansi.aprender(nuevo)
+        st.success(resultado)
+        st.rerun()
+
+# TAB 6: Datos
+with tab6:
+    st.markdown("### Datos y Reportes")
+    
+    display_df = df[["nombre", "direccion", "tipo", "estado", "esclusa", "velocidad", "eta_horas", "prioridad"]].copy()
+    display_df["velocidad"] = display_df["velocidad"].round(1)
+    display_df["eta_horas"] = display_df["eta_horas"].round(1)
+    display_df["direccion"] = display_df["direccion"].apply(lambda x: "Norte" if x == "Norte" else "Sur")
+    display_df.columns = ["Nombre", "Direccion", "Tipo", "Estado", "Esclusa", "Velocidad", "ETA (h)", "Prioridad"]
+    
+    st.dataframe(display_df, use_container_width=True)
+    
+    st.markdown("---")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(label="Descargar datos (CSV)", data=csv, file_name="canal_datos.csv", mime="text/csv")
+    
+    with col2:
+        reporte = anayansi.generar_reporte(df, stats)
+        st.download_button(label="Descargar Reporte (TXT)", data=reporte, file_name="reporte_canal.txt", mime="text/plain")
+
+# ==========================================
+# FOOTER
+# ==========================================
+
+st.markdown("""
+<div class="footer">
+    🌊 ANAYANSI - Canal Predictor | Sabiduria del mar | Panama
+</div>
+""", unsafe_allow_html=True)
