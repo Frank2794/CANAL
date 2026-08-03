@@ -33,12 +33,37 @@ st.set_page_config(
 )
 
 # ==========================================
+# ESTILOS CSS
+# ==========================================
+
+st.markdown("""
+<style>
+    .main-header { font-size: 2.2rem; font-weight: 900; color: #00b4d8; }
+    .sub-header { font-size: 0.9rem; color: #94a3b8; margin-top: -5px; }
+    .metric-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 15px; }
+    .metric-value { font-size: 1.8rem; font-weight: 700; color: white; }
+    .metric-label { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; }
+    .chat-ai { background: rgba(0,150,255,0.1); border-left: 3px solid #00b4d8; padding: 12px; border-radius: 8px; margin: 8px 0; color: #e2e8f0; }
+    .chat-user { background: rgba(15,23,42,0.8); border-left: 3px solid #64748b; padding: 12px; border-radius: 8px; margin: 8px 0; color: #94a3b8; }
+    .insight-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; margin: 8px 0; }
+    .alert-card { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; border-radius: 10px; padding: 12px; margin: 8px 0; }
+    .warning-card { background: rgba(245,158,11,0.1); border: 1px solid #f59e0b; border-radius: 10px; padding: 12px; margin: 8px 0; }
+    .info-card { background: rgba(0,150,255,0.1); border: 1px solid #00b4d8; border-radius: 10px; padding: 12px; margin: 8px 0; }
+    .footer { text-align: center; color: #475569; padding: 15px 0; border-top: 1px solid #1e293b; margin-top: 20px; font-size: 0.7rem; }
+    .decision-card { background: #0f172a; border: 1px solid #00b4d8; border-radius: 10px; padding: 15px; margin: 10px 0; }
+    div.stButton > button { background: #00b4d8; color: white; border-radius: 8px; border: none; padding: 0.4rem 1.2rem; font-weight: 600; }
+    .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 8px 16px; }
+    .stTabs [aria-selected="true"] { background: #00b4d8; color: white; border-radius: 6px; }
+    .esclusa-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
 # 1. MOTOR DE DECISIÓN AUTÓNOMA
 # ==========================================
 
 @dataclass
 class DecisionContext:
-    """Contexto completo para toma de decisiones"""
     timestamp: datetime
     barcos_activos: int
     esclusas_disponibles: List[str]
@@ -49,8 +74,6 @@ class DecisionContext:
     prioridades: Dict[str, float]
 
 class MotorDecisionAutonoma:
-    """Cerebro de ANAYANSI - Toma decisiones operativas en tiempo real"""
-    
     def __init__(self):
         self.nivel_autonomia = 0.85
         self.historial_decisiones = []
@@ -64,19 +87,15 @@ class MotorDecisionAutonoma:
         self.umbrales_criticos = {
             "congestion_maxima": 0.85,
             "tiempo_espera_max": 120,
-            "velocidad_minima": 3,
+            "velocidad_minima": 3.0,
             "distancia_seguridad": 0.3
         }
         self.decisiones_tomadas = 0
         self.aciertos = 0
         
     def decidir(self, contexto: Dict, opciones: List[Dict]) -> Dict:
-        """Toma la mejor decisión basada en contexto y aprendizaje"""
-        
-        # 1. Analizar contexto completo
         analisis = self._analizar_contexto(contexto)
         
-        # 2. Evaluar todas las opciones
         evaluaciones = []
         for opcion in opciones:
             puntaje = self._evaluar_opcion(opcion, analisis)
@@ -86,10 +105,8 @@ class MotorDecisionAutonoma:
                 "razonamiento": self._generar_razonamiento(opcion, puntaje, analisis)
             })
         
-        # 3. Seleccionar la mejor
         mejor = max(evaluaciones, key=lambda x: x["puntaje"])
         
-        # 4. Registrar y aprender
         decision = {
             "timestamp": datetime.now().isoformat(),
             "contexto": analisis,
@@ -101,14 +118,12 @@ class MotorDecisionAutonoma:
         self.historial_decisiones.append(decision)
         self.decisiones_tomadas += 1
         
-        # 5. Auto-evaluación
         if self.decisiones_tomadas > 10:
             self._auto_evaluar()
         
         return decision
     
     def _analizar_contexto(self, contexto: Dict) -> Dict:
-        """Analiza múltiples capas de contexto"""
         return {
             "operativo": self._analizar_operativo(contexto),
             "climatico": self._analizar_clima(contexto),
@@ -117,11 +132,9 @@ class MotorDecisionAutonoma:
         }
     
     def _analizar_operativo(self, contexto: Dict) -> Dict:
-        """Analiza estado operativo actual"""
         barcos = contexto.get("barcos", 0)
         esclusas = len(contexto.get("esclusas_disponibles", []))
         demanda = contexto.get("demanda_actual", 0)
-        
         congestion = (barcos / (esclusas * 4)) if esclusas > 0 else 0.5
         return {
             "barcos": barcos,
@@ -132,10 +145,8 @@ class MotorDecisionAutonoma:
         }
     
     def _analizar_clima(self, contexto: Dict) -> Dict:
-        """Analiza condiciones climáticas"""
         viento = contexto.get("condiciones_climaticas", {}).get("viento", 0)
         oleaje = contexto.get("condiciones_climaticas", {}).get("oleaje", 0)
-        
         return {
             "viento": viento,
             "oleaje": oleaje,
@@ -144,7 +155,6 @@ class MotorDecisionAutonoma:
         }
     
     def _analizar_seguridad(self, contexto: Dict) -> Dict:
-        """Analiza factores de seguridad"""
         return {
             "nivel_riesgo": contexto.get("riesgo", 0.2),
             "alertas_activas": contexto.get("alertas", []),
@@ -152,12 +162,9 @@ class MotorDecisionAutonoma:
         }
     
     def _analizar_historico(self, contexto: Dict) -> Dict:
-        """Analiza datos históricos relevantes"""
         historico = contexto.get("historico_reciente", [])
         if not historico:
             return {"tendencia": "estable", "confianza": 0.5}
-        
-        # Calcular tendencia simple
         if len(historico) > 5:
             valores = [h.get("eficiencia", 0.5) for h in historico[-5:]]
             tendencia = (valores[-1] - valores[0]) / max(valores[0], 0.01)
@@ -168,97 +175,66 @@ class MotorDecisionAutonoma:
         return {"tendencia": "estable", "confianza": 0.5}
     
     def _evaluar_opcion(self, opcion: Dict, analisis: Dict) -> float:
-        """Evalúa una opción con pesos dinámicos"""
         puntaje = 0
-        
-        # Seguridad
-        seguridad_score = self._evaluar_seguridad(opcion, analisis)
-        puntaje += seguridad_score * self.pesos_decision["seguridad"]
-        
-        # Eficiencia
-        eficiencia_score = self._evaluar_eficiencia(opcion, analisis)
-        puntaje += eficiencia_score * self.pesos_decision["eficiencia"]
-        
-        # Costo
-        costo_score = self._evaluar_costo(opcion, analisis)
-        puntaje += costo_score * self.pesos_decision["costo"]
-        
-        # Sostenibilidad
-        sostenibilidad_score = self._evaluar_sostenibilidad(opcion, analisis)
-        puntaje += sostenibilidad_score * self.pesos_decision["sostenibilidad"]
-        
+        puntaje += self._evaluar_seguridad(opcion, analisis) * self.pesos_decision["seguridad"]
+        puntaje += self._evaluar_eficiencia(opcion, analisis) * self.pesos_decision["eficiencia"]
+        puntaje += self._evaluar_costo(opcion, analisis) * self.pesos_decision["costo"]
+        puntaje += self._evaluar_sostenibilidad(opcion, analisis) * self.pesos_decision["sostenibilidad"]
         return min(max(puntaje, 0), 1.0)
     
     def _evaluar_seguridad(self, opcion: Dict, analisis: Dict) -> float:
-        """Evalúa seguridad de una opción"""
         riesgo = opcion.get("riesgo", 0.2)
         return 1.0 - riesgo
     
     def _evaluar_eficiencia(self, opcion: Dict, analisis: Dict) -> float:
-        """Evalúa eficiencia de una opción"""
         tiempo = opcion.get("tiempo", 60)
         eficiencia_base = 1.0 - (tiempo / 120)
         return min(max(eficiencia_base, 0), 1.0)
     
     def _evaluar_costo(self, opcion: Dict, analisis: Dict) -> float:
-        """Evalúa costo de una opción"""
         costo = opcion.get("costo", 1000)
         costo_max = 5000
         return 1.0 - min(costo / costo_max, 1.0)
     
     def _evaluar_sostenibilidad(self, opcion: Dict, analisis: Dict) -> float:
-        """Evalúa sostenibilidad de una opción"""
         co2 = opcion.get("co2", 100)
         co2_max = 500
         return 1.0 - min(co2 / co2_max, 1.0)
     
     def _generar_razonamiento(self, opcion: Dict, puntaje: float, analisis: Dict) -> str:
-        """Genera explicación legible de la decisión"""
         razones = []
-        
         if puntaje > 0.8:
-            razones.append("✅ Excelente opción operativa")
+            razones.append("Excelente opción operativa")
         elif puntaje > 0.6:
-            razones.append("🟡 Buena opción con margen de mejora")
+            razones.append("Buena opción con margen de mejora")
         else:
-            razones.append("🔴 Opción con riesgos considerables")
-        
-        # Añadir razones específicas
+            razones.append("Opción con riesgos considerables")
         if analisis["operativo"]["congestion"] > 0.7:
-            razones.append(f"⚠️ Alta congestión ({analisis['operativo']['congestion']*100:.0f}%)")
-        
+            razones.append(f"Alta congestión ({analisis['operativo']['congestion']*100:.0f}%)")
         if analisis["climatico"]["recomienda_precaucion"]:
-            razones.append("🌪️ Condiciones climáticas adversas")
-        
+            razones.append("Condiciones climáticas adversas")
         if opcion.get("prioridad") == "alta":
-            razones.append("⭐ Prioridad alta justifica recursos adicionales")
-        
+            razones.append("Prioridad alta justifica recursos adicionales")
         return " | ".join(razones)
     
     def _calcular_confianza(self, decision: Dict) -> float:
-        """Calcula nivel de confianza en la decisión"""
         base = 0.7
         puntaje = decision["puntaje"]
         historico = self._confianza_historica()
         return min(base + (puntaje - 0.5) * 0.5 + historico * 0.1, 0.98)
     
     def _confianza_historica(self) -> float:
-        """Calcula factor de confianza basado en historial"""
         if not self.historial_decisiones:
             return 0.5
-        
         exitos = sum(1 for d in self.historial_decisiones[-20:] if d.get("exito", False))
         return exitos / max(len(self.historial_decisiones[-20:]), 1)
     
     def _auto_evaluar(self):
-        """Auto-evaluación periódica del sistema"""
-        # Simular evaluación
         if self.decisiones_tomadas % 10 == 0:
             aciertos = sum(1 for d in self.historial_decisiones[-10:] if d.get("exito", False))
             tasa = aciertos / 10
             self.aciertos += aciertos
             logger.info(f"Auto-evaluación: Tasa de éxito {tasa*100:.1f}%")
-            
             if tasa < 0.7:
                 self.nivel_autonomia = max(0.5, self.nivel_autonomia - 0.05)
                 logger.warning(f"Reduciendo autonomía a {self.nivel_autonomia*100:.0f}%")
@@ -271,8 +247,6 @@ class MotorDecisionAutonoma:
 # ==========================================
 
 class OptimizadorContinuo:
-    """Optimiza constantemente operaciones usando aprendizaje por refuerzo"""
-    
     def __init__(self):
         self.algoritmo = "aprendizaje_por_refuerzo"
         self.recompensas = []
@@ -283,27 +257,19 @@ class OptimizadorContinuo:
         self.epsilon = 0.1
         
     def optimizar_asignacion_esclusas(self, barcos: List[Dict], esclusas_disponibles: List[str]) -> Dict:
-        """Optimiza asignación de barcos a esclusas usando Q-learning"""
-        # Codificar estado
         estado = self._codificar_estado(barcos, esclusas_disponibles)
-        
-        # Generar asignaciones posibles
         asignaciones = self._generar_asignaciones(barcos, esclusas_disponibles)
         
-        # Seleccionar mejor usando Q-learning
         mejor = None
         mejor_valor = -float('inf')
-        
         for asignacion in asignaciones:
             valor = self._calcular_valor_asignacion(asignacion, estado)
             if valor > mejor_valor:
                 mejor_valor = valor
                 mejor = asignacion
         
-        # Actualizar política
         if estado not in self.modelo_q:
             self.modelo_q[estado] = defaultdict(float)
-        
         self.modelo_q[estado][str(mejor)] = mejor_valor
         
         return {
@@ -314,7 +280,6 @@ class OptimizadorContinuo:
         }
     
     def _codificar_estado(self, barcos: List[Dict], esclusas: List[str]) -> str:
-        """Codifica el estado actual en un string hash"""
         estado = {
             "barcos": len(barcos),
             "esclusas": len(esclusas),
@@ -323,7 +288,6 @@ class OptimizadorContinuo:
         return hashlib.md5(str(estado).encode()).hexdigest()[:8]
     
     def _generar_asignaciones(self, barcos: List[Dict], esclusas: List[str]) -> List[Dict]:
-        """Genera asignaciones posibles"""
         asignaciones = []
         for i, barco in enumerate(barcos):
             for esclusa in esclusas:
@@ -333,24 +297,18 @@ class OptimizadorContinuo:
                     "prioridad": barco.get("prioridad", "media"),
                     "tiempo_estimado": random.randint(20, 60)
                 })
-        return asignaciones[:10]  # Limitar para rendimiento
+        return asignaciones[:10]
     
     def _calcular_valor_asignacion(self, asignacion: Dict, estado: str) -> float:
-        """Calcula valor de una asignación usando Q-learning"""
         base = 0.5
         if asignacion["prioridad"] == "alta":
             base += 0.3
         elif asignacion["prioridad"] == "baja":
             base -= 0.2
-        
-        # Factor tiempo
         base += 0.1 * (1 - asignacion["tiempo_estimado"] / 60)
-        
-        # Ajuste por aprendizaje
         if estado in self.modelo_q:
             valor_aprendido = self.modelo_q[estado].get(str(asignacion), 0)
             base = 0.7 * base + 0.3 * valor_aprendido
-        
         return min(max(base, 0), 1.0)
 
 # ==========================================
@@ -358,8 +316,6 @@ class OptimizadorContinuo:
 # ==========================================
 
 class SistemaPrediccionPrevencion:
-    """Predice problemas antes de que ocurran y toma medidas preventivas"""
-    
     def __init__(self):
         self.modelos_prediccion = {}
         self.alertas_preventivas = []
@@ -372,7 +328,6 @@ class SistemaPrediccionPrevencion:
         self.historial_predicciones = []
         
     def predecir_y_prevenir(self, datos_actuales: Dict) -> Dict:
-        """Predice problemas y genera acciones preventivas"""
         predicciones = self._generar_predicciones(datos_actuales)
         acciones_preventivas = []
         
@@ -380,7 +335,6 @@ class SistemaPrediccionPrevencion:
             if self._es_critico(prediccion):
                 accion = self._generar_accion_preventiva(prediccion)
                 acciones_preventivas.append(accion)
-                
                 if accion.get("urgencia", 0) > 0.8:
                     self._ejecutar_accion_preventiva(accion)
         
@@ -391,10 +345,7 @@ class SistemaPrediccionPrevencion:
         }
     
     def _generar_predicciones(self, datos: Dict) -> List[Dict]:
-        """Genera predicciones basadas en datos actuales"""
         predicciones = []
-        
-        # Predicción de congestión
         barcos = datos.get("barcos", 0)
         esclusas = len(datos.get("esclusas_disponibles", []))
         congestion_prob = min((barcos / (esclusas * 4)) * 1.2, 1.0)
@@ -407,7 +358,6 @@ class SistemaPrediccionPrevencion:
                 "severidad": "alta" if congestion_prob > 0.85 else "media"
             })
         
-        # Predicción climática
         viento = datos.get("condiciones_climaticas", {}).get("viento", 0)
         if viento > 25:
             predicciones.append({
@@ -420,31 +370,16 @@ class SistemaPrediccionPrevencion:
         return predicciones
     
     def _es_critico(self, prediccion: Dict) -> bool:
-        """Determina si una predicción es crítica"""
         umbral = self.umbrales_prevencion.get(prediccion["tipo"] + "_anticipado", 0.7)
         return prediccion["probabilidad"] > umbral
     
     def _generar_accion_preventiva(self, prediccion: Dict) -> Dict:
-        """Genera acción preventiva para una predicción"""
         acciones = {
-            "congestion": {
-                "accion": "Redistribuir tráfico a esclusas alternativas",
-                "urgencia": 0.8
-            },
-            "clima_severo": {
-                "accion": "Activar protocolo de seguridad climática",
-                "urgencia": 0.9
-            },
-            "falla": {
-                "accion": "Programar mantenimiento preventivo",
-                "urgencia": 0.7
-            },
-            "retraso": {
-                "accion": "Ajustar horarios y prioridades",
-                "urgencia": 0.6
-            }
+            "congestion": {"accion": "Redistribuir tráfico a esclusas alternativas", "urgencia": 0.8},
+            "clima_severo": {"accion": "Activar protocolo de seguridad climática", "urgencia": 0.9},
+            "falla": {"accion": "Programar mantenimiento preventivo", "urgencia": 0.7},
+            "retraso": {"accion": "Ajustar horarios y prioridades", "urgencia": 0.6}
         }
-        
         base = acciones.get(prediccion["tipo"], {"accion": "Monitorear situación", "urgencia": 0.5})
         return {
             "tipo": prediccion["tipo"],
@@ -454,15 +389,12 @@ class SistemaPrediccionPrevencion:
         }
     
     def _ejecutar_accion_preventiva(self, accion: Dict):
-        """Simula ejecución de acción preventiva"""
         logger.info(f"🛡️ Ejecutando acción preventiva: {accion['accion']}")
         self.alertas_preventivas.append(accion)
     
     def _calcular_nivel_alerta(self, predicciones: List[Dict]) -> str:
-        """Calcula nivel de alerta general"""
         if not predicciones:
             return "🟢 Normal"
-        
         max_prob = max(p["probabilidad"] for p in predicciones)
         if max_prob > 0.85:
             return "🔴 Crítico"
@@ -475,8 +407,6 @@ class SistemaPrediccionPrevencion:
 # ==========================================
 
 class MemoriaRazonamiento:
-    """Sistema de memoria episódica y semántica para razonamiento contextual"""
-    
     def __init__(self):
         self.memoria_episodica = []
         self.memoria_semantica = defaultdict(list)
@@ -485,7 +415,6 @@ class MemoriaRazonamiento:
         self.capacidad_maxima = 1000
         
     def _construir_red_semantica(self) -> Dict:
-        """Construye red semántica inicial"""
         return {
             "canal": ["esclusas", "barcos", "tráfico", "clima"],
             "esclusas": ["gatun", "pedro_miguel", "miraflores", "capacidad", "tiempo_espera"],
@@ -495,14 +424,9 @@ class MemoriaRazonamiento:
         }
     
     def razonar(self, problema: str, contexto: Dict) -> Dict:
-        """Razonamiento basado en experiencias pasadas y conocimiento"""
-        # 1. Buscar en memoria episódica
         experiencias = self._buscar_experiencias(problema, contexto)
-        
-        # 2. Buscar en memoria semántica
         conocimiento = self._buscar_conocimiento(problema)
         
-        # 3. Razonar
         if experiencias:
             return self._razonar_por_casos(problema, experiencias, contexto)
         elif conocimiento:
@@ -511,23 +435,18 @@ class MemoriaRazonamiento:
             return self._razonar_creativamente(problema, contexto)
     
     def _buscar_experiencias(self, problema: str, contexto: Dict) -> List[Dict]:
-        """Busca experiencias similares"""
         similares = []
         palabras_clave = set(problema.lower().split())
-        
         for exp in self.memoria_episodica[-100:]:
             exp_palabras = set(exp.get("problema", "").lower().split())
             similitud = len(palabras_clave & exp_palabras) / max(len(palabras_clave), 1)
             if similitud > 0.3:
                 similares.append(exp)
-        
         return similares[:5]
     
     def _buscar_conocimiento(self, problema: str) -> List[str]:
-        """Busca conocimiento relevante"""
         conocimiento = []
         palabras = problema.lower().split()
-        
         for palabra in palabras:
             if palabra in self.red_semantica:
                 conocimiento.extend(self.red_semantica[palabra])
@@ -535,14 +454,10 @@ class MemoriaRazonamiento:
                 for clave, valor in self.red_semantica.items():
                     if palabra in valor:
                         conocimiento.append(clave)
-        
         return list(set(conocimiento))
     
     def _razonar_por_casos(self, problema: str, experiencias: List[Dict], contexto: Dict) -> Dict:
-        """Razona usando casos similares"""
-        # Encontrar caso más similar
         mejor_caso = max(experiencias, key=lambda x: x.get("efectividad", 0))
-        
         return {
             "metodo": "razonamiento_por_casos",
             "solucion": mejor_caso.get("solucion", "Adaptar solución previa"),
@@ -552,14 +467,11 @@ class MemoriaRazonamiento:
         }
     
     def _razonar_por_reglas(self, problema: str, conocimiento: List[str], contexto: Dict) -> Dict:
-        """Razona usando reglas y conocimiento"""
         reglas = []
         if "esclusas" in conocimiento and contexto.get("barcos", 0) > 30:
             reglas.append("Alto volumen de barcos requiere optimización de esclusas")
-        
         if "clima" in conocimiento and contexto.get("viento", 0) > 20:
             reglas.append("Condiciones climáticas adversas requieren precaución")
-        
         return {
             "metodo": "razonamiento_por_reglas",
             "solucion": reglas[0] if reglas else "Monitoreo continuo",
@@ -568,7 +480,6 @@ class MemoriaRazonamiento:
         }
     
     def _razonar_creativamente(self, problema: str, contexto: Dict) -> Dict:
-        """Razonamiento creativo para problemas nuevos"""
         return {
             "metodo": "razonamiento_creativo",
             "solucion": "Nueva solución propuesta basada en principios generales",
@@ -577,17 +488,14 @@ class MemoriaRazonamiento:
         }
     
     def _adaptar_solucion(self, caso: Dict, contexto: Dict) -> str:
-        """Adapta una solución a un nuevo contexto"""
         adaptaciones = []
         if contexto.get("barcos", 0) > caso.get("barcos", 0):
             adaptaciones.append("Ajustar por mayor volumen de tráfico")
         if contexto.get("viento", 0) > caso.get("viento", 0):
             adaptaciones.append("Incorporar factores climáticos")
-        
         return " | ".join(adaptaciones) if adaptaciones else "Aplicar solución directamente"
     
     def aprender_experiencia(self, problema: str, solucion: str, resultado: Dict):
-        """Aprende de experiencias"""
         experiencia = {
             "problema": problema,
             "solucion": solucion,
@@ -595,26 +503,18 @@ class MemoriaRazonamiento:
             "timestamp": datetime.now().isoformat(),
             "efectividad": self._evaluar_efectividad(resultado)
         }
-        
         self.memoria_episodica.append(experiencia)
-        
-        # Limitar memoria
         if len(self.memoria_episodica) > self.capacidad_maxima:
             self.memoria_episodica = self.memoria_episodica[-self.capacidad_maxima:]
     
     def _evaluar_efectividad(self, resultado: Dict) -> float:
-        """Evalúa efectividad de una experiencia"""
-        if resultado.get("exitoso", False):
-            return 0.9
-        return 0.3
+        return 0.9 if resultado.get("exitoso", False) else 0.3
 
 # ==========================================
 # 5. SISTEMA DE OPTIMIZACIÓN DE RECURSOS
 # ==========================================
 
 class OptimizadorRecursos:
-    """Optimiza la asignación y uso de todos los recursos del sistema"""
-    
     def __init__(self):
         self.recursos = {
             "esclusas": {"capacidad": 4, "tiempo_ciclo": 45, "costo_operacion": 1000},
@@ -626,20 +526,11 @@ class OptimizadorRecursos:
         self.eficiencia_historica = []
     
     def optimizar_recursos_dinamico(self, demanda: Dict, condiciones: Dict) -> Dict:
-        """Optimiza asignación de recursos en tiempo real"""
-        # 1. Evaluar demanda
         demanda_actual = self._evaluar_demanda(demanda)
-        
-        # 2. Calcular recursos necesarios
         recursos_necesarios = self._calcular_recursos_necesarios(demanda_actual, condiciones)
-        
-        # 3. Optimizar asignación
         asignacion = self._asignar_recursos_optimos(recursos_necesarios)
-        
-        # 4. Calcular eficiencia
         eficiencia = self._calcular_eficiencia_asignacion(asignacion)
         
-        # 5. Ajustar si es necesario
         if eficiencia < 0.8:
             asignacion = self._rebalancear_recursos(asignacion)
             eficiencia = self._calcular_eficiencia_asignacion(asignacion)
@@ -654,7 +545,6 @@ class OptimizadorRecursos:
         }
     
     def _evaluar_demanda(self, demanda: Dict) -> Dict:
-        """Evalúa demanda actual"""
         return {
             "barcos": demanda.get("barcos", 0),
             "urgencia": demanda.get("urgencia", 0.5),
@@ -662,15 +552,11 @@ class OptimizadorRecursos:
         }
     
     def _calcular_recursos_necesarios(self, demanda: Dict, condiciones: Dict) -> Dict:
-        """Calcula recursos necesarios para la demanda"""
         barcos = demanda["barcos"]
-        urgencia = demanda["urgencia"]
-        
         esclusas_necesarias = max(1, int(barcos / 4))
         remolcadores_necesarios = max(2, int(barcos / 6))
         pilotos_necesarios = max(3, int(barcos / 3))
         
-        # Ajustar por condiciones climáticas
         if condiciones.get("viento", 0) > 20:
             remolcadores_necesarios += 2
             pilotos_necesarios += 2
@@ -683,9 +569,7 @@ class OptimizadorRecursos:
         }
     
     def _asignar_recursos_optimos(self, recursos_necesarios: Dict) -> Dict:
-        """Asigna recursos de manera óptima"""
         asignacion = {}
-        
         for recurso, cantidad in recursos_necesarios.items():
             disponible = self.recursos.get(recurso, {}).get("cantidad", 0)
             asignacion[recurso] = {
@@ -693,41 +577,31 @@ class OptimizadorRecursos:
                 "disponible": disponible,
                 "utilizacion": min(cantidad / max(disponible, 1), 1.0)
             }
-        
         return asignacion
     
     def _calcular_eficiencia_asignacion(self, asignacion: Dict) -> float:
-        """Calcula eficiencia de la asignación"""
         if not asignacion:
             return 0.5
-        
         eficiencias = []
         for datos in asignacion.values():
             eficiencia = 1.0 - (datos.get("disponible", 0) - datos.get("asignado", 0)) / max(datos.get("disponible", 1), 1)
             eficiencias.append(eficiencia)
-        
         return sum(eficiencias) / len(eficiencias)
     
     def _rebalancear_recursos(self, asignacion: Dict) -> Dict:
-        """Rebalancea recursos para mejorar eficiencia"""
         for recurso, datos in asignacion.items():
             if datos["utilizacion"] < 0.5:
-                # Redistribuir recursos
                 datos["asignado"] = int(datos["asignado"] * 0.8)
                 datos["utilizacion"] = datos["asignado"] / max(datos["disponible"], 1)
-        
         return asignacion
     
     def _generar_recomendaciones(self, asignacion: Dict) -> List[str]:
-        """Genera recomendaciones basadas en asignación"""
         recomendaciones = []
-        
         for recurso, datos in asignacion.items():
             if datos["utilizacion"] > 0.9:
                 recomendaciones.append(f"⚠️ Alta utilización de {recurso} - Considerar aumentar capacidad")
             elif datos["utilizacion"] < 0.3:
                 recomendaciones.append(f"💡 Baja utilización de {recurso} - Posible exceso de capacidad")
-        
         return recomendaciones
 
 # ==========================================
@@ -735,8 +609,6 @@ class OptimizadorRecursos:
 # ==========================================
 
 class SistemaEvaluacionContinua:
-    """Evalúa continuamente el rendimiento del sistema y genera mejoras"""
-    
     def __init__(self):
         self.kpis = {
             "eficiencia_operativa": 0,
@@ -758,20 +630,11 @@ class SistemaEvaluacionContinua:
         self.historial_evaluaciones = []
     
     def evaluar_y_mejorar(self, datos_actuales: Dict) -> Dict:
-        """Evaluación automática y generación de plan de mejora"""
-        # 1. Medir KPIs actuales
         kpis_actuales = self._medir_kpis(datos_actuales)
-        
-        # 2. Comparar con benchmarks
         brechas = self._identificar_brechas(kpis_actuales)
-        
-        # 3. Generar plan de mejora
         plan_mejora = self._generar_plan_mejora(brechas)
-        
-        # 4. Priorizar mejoras
         plan_priorizado = self._priorizar_mejoras(plan_mejora)
         
-        # 5. Registrar
         evaluacion = {
             "timestamp": datetime.now().isoformat(),
             "kpis": kpis_actuales,
@@ -779,11 +642,9 @@ class SistemaEvaluacionContinua:
             "plan_mejora": plan_priorizado
         }
         self.historial_evaluaciones.append(evaluacion)
-        
         return evaluacion
     
     def _medir_kpis(self, datos: Dict) -> Dict:
-        """Mide KPIs del sistema"""
         return {
             "eficiencia_operativa": datos.get("eficiencia", 0.8),
             "satisfaccion_usuario": datos.get("satisfaccion", 0.85),
@@ -794,9 +655,7 @@ class SistemaEvaluacionContinua:
         }
     
     def _identificar_brechas(self, kpis: Dict) -> Dict:
-        """Identifica brechas entre KPIs actuales y benchmarks"""
         brechas = {}
-        
         for kpi, valor in kpis.items():
             benchmark = self.benchmarks.get(kpi, 0)
             if isinstance(valor, (int, float)):
@@ -807,13 +666,10 @@ class SistemaEvaluacionContinua:
                         "brecha": benchmark - valor,
                         "prioridad": "alta" if (benchmark - valor) / benchmark > 0.15 else "media"
                     }
-        
         return brechas
     
     def _generar_plan_mejora(self, brechas: Dict) -> List[Dict]:
-        """Genera plan de mejora basado en brechas"""
         plan = []
-        
         for kpi, datos in brechas.items():
             if datos["prioridad"] == "alta":
                 plan.append({
@@ -822,11 +678,9 @@ class SistemaEvaluacionContinua:
                     "impacto_estimado": datos["brecha"] / datos["objetivo"],
                     "tiempo_estimado": "3-5 días"
                 })
-        
         return plan
     
     def _sugerir_mejora(self, kpi: str) -> str:
-        """Sugiere mejora para un KPI específico"""
         sugerencias = {
             "eficiencia_operativa": "Optimizar procesos de asignación de esclusas",
             "satisfaccion_usuario": "Mejorar tiempos de respuesta y comunicación",
@@ -838,7 +692,6 @@ class SistemaEvaluacionContinua:
         return sugerencias.get(kpi, "Monitorear y ajustar continuamente")
     
     def _priorizar_mejoras(self, plan: List[Dict]) -> List[Dict]:
-        """Prioriza mejoras por impacto"""
         return sorted(plan, key=lambda x: x["impacto_estimado"], reverse=True)
 
 # ==========================================
@@ -846,8 +699,6 @@ class SistemaEvaluacionContinua:
 # ==========================================
 
 class SistemaCompleto:
-    """Integra todos los módulos en un sistema cohesivo de IA operativa"""
-    
     def __init__(self):
         self.motor_decision = MotorDecisionAutonoma()
         self.optimizador = OptimizadorContinuo()
@@ -867,32 +718,21 @@ class SistemaCompleto:
         }
         
     def procesar_operacion(self, datos_operativos: Dict) -> Dict:
-        """Procesa una operación completa de principio a fin"""
-        
-        # 1. Analizar situación
         analisis = self.motor_decision._analizar_contexto(datos_operativos)
-        
-        # 2. Generar predicciones
         predicciones = self.prediccion.predecir_y_prevenir(datos_operativos)
-        
-        # 3. Optimizar recursos
         recursos = self.recursos.optimizar_recursos_dinamico(
             {"barcos": datos_operativos.get("barcos", 0)},
             datos_operativos.get("condiciones_climaticas", {})
         )
-        
-        # 4. Generar opciones y tomar decisiones
         opciones = self._generar_opciones(datos_operativos)
         decisiones = self.motor_decision.decidir(datos_operativos, opciones)
         
-        # 5. Aprender de la experiencia
         self.memoria.aprender_experiencia(
             str(datos_operativos),
             str(decisiones),
             {"exitoso": True}
         )
         
-        # 6. Evaluar rendimiento
         evaluacion = self.evaluacion.evaluar_y_mejorar({
             "eficiencia": recursos["eficiencia"],
             "tiempo_respuesta": 1.5,
@@ -900,7 +740,6 @@ class SistemaCompleto:
             "sostenibilidad": 0.75
         })
         
-        # 7. Actualizar métricas
         self.metricas_sistema["decisiones_tomadas"] += 1
         self.metricas_sistema["alertas_generadas"] += len(predicciones["acciones_preventivas"])
         self.metricas_sistema["optimizaciones_realizadas"] += 1
@@ -917,9 +756,7 @@ class SistemaCompleto:
         }
     
     def _generar_opciones(self, datos: Dict) -> List[Dict]:
-        """Genera opciones para la toma de decisiones"""
         opciones = []
-        
         esclusas = datos.get("esclusas_disponibles", ["Gatun", "Pedro Miguel", "Miraflores"])
         prioridades = ["alta", "media", "baja"]
         
@@ -933,13 +770,10 @@ class SistemaCompleto:
                     "riesgo": random.uniform(0.1, 0.4),
                     "co2": random.randint(50, 200)
                 })
-        
         return opciones
     
     def configurar_modo_operativo(self, modo: str) -> Dict:
-        """Configura el modo operativo del sistema"""
         self.modo_operativo = modo
-        
         if modo == "autonomo":
             self.nivel_autonomia = 0.95
             self.motor_decision.nivel_autonomia = 0.95
@@ -948,7 +782,7 @@ class SistemaCompleto:
             self.nivel_autonomia = 0.5
             self.motor_decision.nivel_autonomia = 0.5
             mensaje = "👁️ Modo supervisado - Sistema sugiere, humano decide"
-        else:  # manual
+        else:
             self.nivel_autonomia = 0.1
             self.motor_decision.nivel_autonomia = 0.1
             mensaje = "🖐️ Modo manual - Control humano total"
@@ -960,31 +794,7 @@ class SistemaCompleto:
         }
 
 # ==========================================
-# GENERAR DATOS DE DEMOSTRACIÓN
-# ==========================================
-
-def generar_datos_demostracion():
-    """Genera datos de demostración para el dashboard"""
-    # Simular barcos
-    n = np.random.randint(35, 55)
-    barcos = []
-    for i in range(n):
-        barco = {
-            "nombre": f"B{i+1:04d}",
-            "tipo": np.random.choice(["Portacontenedores", "Granelero", "Petrolero", "Gasero", "Carguero", "Crucero"]),
-            "direccion": "Sur" if np.random.random() < 0.5 else "Norte",
-            "velocidad": np.random.uniform(4, 16),
-            "estado": np.random.choice(["Navegando", "Navegando", "Navegando", "En espera", "Entrando"]),
-            "esclusa": np.random.choice(["Gatun", "Pedro Miguel", "Miraflores"]),
-            "prioridad": np.random.choice(["Alta", "Media", "Baja"], p=[0.15, 0.55, 0.30]),
-            "carga": np.random.uniform(100, 10000)
-        }
-        barcos.append(barco)
-    
-    return pd.DataFrame(barcos)
-
-# ==========================================
-# GENERAR DATOS PARA EL DASHBOARD
+# GENERAR DATOS
 # ==========================================
 
 @st.cache_data(ttl=30)
@@ -1143,47 +953,13 @@ df = st.session_state.df
 stats = st.session_state.stats
 
 # ==========================================
-# INTERFAZ DE USUARIO
-# ==========================================
-
-st.markdown("""
-<style>
-    .main-header { font-size: 2.2rem; font-weight: 900; color: #00b4d8; }
-    .sub-header { font-size: 0.9rem; color: #94a3b8; margin-top: -5px; }
-    .metric-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 15px; }
-    .metric-value { font-size: 1.8rem; font-weight: 700; color: white; }
-    .metric-label { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; }
-    .chat-ai { background: rgba(0,150,255,0.1); border-left: 3px solid #00b4d8; padding: 12px; border-radius: 8px; margin: 8px 0; color: #e2e8f0; }
-    .chat-user { background: rgba(15,23,42,0.8); border-left: 3px solid #64748b; padding: 12px; border-radius: 8px; margin: 8px 0; color: #94a3b8; }
-    .insight-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; margin: 8px 0; }
-    .alert-card { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; border-radius: 10px; padding: 12px; margin: 8px 0; }
-    .warning-card { background: rgba(245,158,11,0.1); border: 1px solid #f59e0b; border-radius: 10px; padding: 12px; margin: 8px 0; }
-    .info-card { background: rgba(0,150,255,0.1); border: 1px solid #00b4d8; border-radius: 10px; padding: 12px; margin: 8px 0; }
-    .footer { text-align: center; color: #475569; padding: 15px 0; border-top: 1px solid #1e293b; margin-top: 20px; font-size: 0.7rem; }
-    .decision-card { background: #0f172a; border: 1px solid #00b4d8; border-radius: 10px; padding: 15px; margin: 10px 0; }
-    div.stButton > button { background: #00b4d8; color: white; border-radius: 8px; border: none; padding: 0.4rem 1.2rem; font-weight: 600; }
-    .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 8px 16px; }
-    .stTabs [aria-selected="true"] { background: #00b4d8; color: white; border-radius: 6px; }
-    .esclusa-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
-</style>
-""", unsafe_allow_html=True)
-
-# ==========================================
-# HEADER PRINCIPAL
-# ==========================================
-
-st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Sistema de Inteligencia Artificial para Optimización Operativa del Canal de Panamá</div>', unsafe_allow_html=True)
-
-# ==========================================
-# SIDEBAR - ESTADO DEL SISTEMA
+# SIDEBAR
 # ==========================================
 
 with st.sidebar:
     st.markdown("### 🧠 ANAYANSI")
     st.markdown("---")
     
-    # Estado del sistema
     st.markdown(f"**🤖 Modo:** {sistema.modo_operativo.upper()}")
     st.markdown(f"**⚡ Autonomía:** {sistema.nivel_autonomia*100:.0f}%")
     st.markdown(f"**📊 Decisiones:** {sistema.metricas_sistema['decisiones_tomadas']}")
@@ -1191,9 +967,7 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Controles del sistema
     st.markdown("#### 🎮 Control del Sistema")
-    
     modos = ["autonomo", "supervisado", "manual"]
     modo_actual = st.selectbox("Modo Operativo", modos, index=modos.index(sistema.modo_operativo))
     
@@ -1204,7 +978,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Métricas rápidas
     col1, col2 = st.columns(2)
     col1.metric("🚢", stats["total"])
     col2.metric("⏱️", f"{stats['cwt']:.1f}h")
@@ -1229,6 +1002,9 @@ with st.sidebar:
 # ==========================================
 # CONTENIDO PRINCIPAL
 # ==========================================
+
+st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Sistema de Inteligencia Artificial para Optimización Operativa del Canal de Panamá</div>', unsafe_allow_html=True)
 
 # Mostrar última decisión si existe
 if "ultima_operacion" in st.session_state:
@@ -1417,7 +1193,6 @@ with tab3:
     if pregunta:
         st.session_state.chat_messages.append({"rol": "usuario", "msg": pregunta})
         
-        # Procesar pregunta con la IA
         if "decisión" in pregunta.lower() or "optimizar" in pregunta.lower():
             datos = {
                 "barcos": stats["total"],
@@ -1537,11 +1312,18 @@ with tab6:
     st.markdown("#### 🎚️ Umbrales Críticos")
     col1, col2 = st.columns(2)
     with col1:
-        st.slider("Congestión Máxima", 0.5, 1.0, sistema.motor_decision.umbrales_criticos["congestion_maxima"], 0.05, key="umbral_congestion")
-        st.slider("Tiempo Espera Máx (min)", 30, 180, sistema.motor_decision.umbrales_criticos["tiempo_espera_max"], 10, key="umbral_espera")
+        congestion_actual = float(sistema.motor_decision.umbrales_criticos["congestion_maxima"])
+        st.slider("Congestión Máxima", 0.5, 1.0, congestion_actual, 0.05, key="umbral_congestion")
+        
+        espera_actual = float(sistema.motor_decision.umbrales_criticos["tiempo_espera_max"])
+        st.slider("Tiempo Espera Máx (min)", 30, 180, espera_actual, 5.0, key="umbral_espera")
+    
     with col2:
-        st.slider("Velocidad Mínima", 1, 6, sistema.motor_decision.umbrales_criticos["velocidad_minima"], 0.5, key="umbral_velocidad")
-        st.slider("Distancia Seguridad", 0.1, 0.5, sistema.motor_decision.umbrales_criticos["distancia_seguridad"], 0.05, key="umbral_distancia")
+        velocidad_actual = float(sistema.motor_decision.umbrales_criticos["velocidad_minima"])
+        st.slider("Velocidad Mínima (nudos)", 1.0, 6.0, velocidad_actual, 0.5, key="umbral_velocidad")
+        
+        distancia_actual = float(sistema.motor_decision.umbrales_criticos["distancia_seguridad"])
+        st.slider("Distancia Seguridad (millas)", 0.1, 0.5, distancia_actual, 0.05, key="umbral_distancia")
     
     if st.button("💾 Actualizar Umbrales"):
         sistema.motor_decision.umbrales_criticos = {
