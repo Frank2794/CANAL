@@ -35,6 +35,12 @@ OPENWEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5"
 CANAL_BBOX = [[-80.5, 8.5], [-79.0, 9.5]]
 CANAL_COORDS = {"lat": 9.0, "lon": -79.6}
 
+# Límites estrictos del Canal (para filtrar barcos)
+LAT_MIN = 8.85
+LAT_MAX = 9.40
+LON_MIN = -80.0
+LON_MAX = -79.5
+
 # ==========================================
 # CONFIGURACIÓN DE LOGGING
 # ==========================================
@@ -88,11 +94,11 @@ st.markdown("""
 os.makedirs("datos_historicos", exist_ok=True)
 
 # ==========================================
-# 1. CLIENTE AISSTREAM - WEBSOCKET
+# 1. CLIENTE AISSTREAM - WEBSOCKET CON FILTRO
 # ==========================================
 
 class ClienteAIS:
-    """Cliente AISStream usando WebSocket en tiempo real"""
+    """Cliente AISStream usando WebSocket - CON FILTRO DE COORDENADAS"""
     
     def __init__(self):
         self.api_key = AIS_API_KEY
@@ -105,9 +111,13 @@ class ClienteAIS:
         self._running = False
         self._lock = threading.Lock()
         self._thread = None
+        # Límites del Canal de Panamá
+        self.lat_min = LAT_MIN
+        self.lat_max = LAT_MAX
+        self.lon_min = LON_MIN
+        self.lon_max = LON_MAX
         
     def iniciar_conexion(self):
-        """Inicia la conexión WebSocket en segundo plano"""
         if self._running:
             return
         
@@ -118,7 +128,6 @@ class ClienteAIS:
         time.sleep(3)
         
     def _run_websocket(self):
-        """Ejecuta el WebSocket en un loop asíncrono"""
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -128,7 +137,6 @@ class ClienteAIS:
             self._running = False
     
     async def _connect_websocket(self):
-        """Conexión WebSocket a AISStream"""
         subscription_message = {
             "APIKey": self.api_key,
             "BoundingBoxes": [[
@@ -157,17 +165,23 @@ class ClienteAIS:
                             
                             mmsi = str(meta.get('MMSI', ''))
                             if mmsi:
-                                with self._lock:
-                                    self.vessels[mmsi] = {
-                                        'timestamp': meta.get('time_utc', datetime.utcnow().isoformat()),
-                                        'mmsi': mmsi,
-                                        'ship_name': meta.get('ShipName', 'Desconocido'),
-                                        'ship_type': meta.get('ShipType', 'Desconocido'),
-                                        'lat': pos.get('Latitude', 0),
-                                        'lon': pos.get('Longitude', 0),
-                                        'speed': pos.get('Sog', 0),
-                                        'course': pos.get('Cog', 0)
-                                    }
+                                lat = pos.get('Latitude', 0)
+                                lon = pos.get('Longitude', 0)
+                                
+                                # FILTRAR COORDENADAS INVÁLIDAS
+                                if lat != 0 and lon != 0:
+                                    if self.lat_min <= lat <= self.lat_max and self.lon_min <= lon <= self.lon_max:
+                                        with self._lock:
+                                            self.vessels[mmsi] = {
+                                                'timestamp': meta.get('time_utc', datetime.utcnow().isoformat()),
+                                                'mmsi': mmsi,
+                                                'ship_name': meta.get('ShipName', 'Desconocido'),
+                                                'ship_type': meta.get('ShipType', 'Desconocido'),
+                                                'lat': lat,
+                                                'lon': lon,
+                                                'speed': pos.get('Sog', 0),
+                                                'course': pos.get('Cog', 0)
+                                            }
                                     
                     except asyncio.TimeoutError:
                         continue
@@ -186,7 +200,6 @@ class ClienteAIS:
             self._running = False
     
     def obtener_barcos_canal(self):
-        """Obtiene los barcos almacenados del WebSocket"""
         if not self._running:
             self.iniciar_conexion()
         
@@ -195,7 +208,7 @@ class ClienteAIS:
             return self.barcos_activos
     
     def procesar_barcos_formateados(self):
-        """Procesa y formatea los barcos para el sistema"""
+        """Procesa y formatea los barcos - CON FILTRO DE COORDENADAS"""
         barcos = self.obtener_barcos_canal()
         if not barcos:
             return []
@@ -206,7 +219,12 @@ class ClienteAIS:
             lon = barco.get('lon', 0)
             speed = barco.get('speed', 0)
             
-            # Determinar dirección según latitud
+            # FILTRO: solo coordenadas válidas
+            if lat == 0 or lon == 0:
+                continue
+            if not (self.lat_min <= lat <= self.lat_max and self.lon_min <= lon <= self.lon_max):
+                continue
+            
             if lat > 9.15:
                 direccion = "Sur"
             elif lat < 9.05:
@@ -214,7 +232,6 @@ class ClienteAIS:
             else:
                 direccion = "Navegando"
             
-            # Determinar posición en el Canal
             posicion = self._determinar_posicion(lat, lon)
             esclusa = self._determinar_esclusa(lat, lon)
             
@@ -242,22 +259,24 @@ class ClienteAIS:
         
         if barcos_formateados:
             self.ultima_actualizacion = datetime.now()
+            logger.info(f"✅ {len(barcos_formateados)} barcos válidos en el Canal")
+        else:
+            logger.warning("⚠️ No hay barcos válidos en el área del Canal")
         
         return barcos_formateados
     
     def _determinar_posicion(self, lat, lon):
-        """Determina la posición exacta en el Canal"""
-        if lat > 9.3:
+        if lat > 9.30:
             return "Entrada Atlántico"
-        elif lat > 9.2:
+        elif lat > 9.20 and lat <= 9.30:
             return "Gatún"
-        elif lat > 9.1:
+        elif lat > 9.10 and lat <= 9.20:
             return "Lago Gatún"
-        elif lat > 9.0:
+        elif lat > 9.03 and lat <= 9.10:
             return "Pedro Miguel"
-        elif lat > 8.95:
+        elif lat > 8.95 and lat <= 9.03:
             return "Miraflores"
-        elif lat > 8.9:
+        elif lat > 8.85 and lat <= 8.95:
             return "Salida Pacífico"
         else:
             return "En tránsito"
@@ -267,31 +286,99 @@ class ClienteAIS:
             return "Miraflores"
         elif 9.05 < lat < 9.15 and -79.65 < lon < -79.58:
             return "Pedro Miguel"
-        elif 9.2 < lat < 9.35 and -79.95 < lon < -79.85:
+        elif 9.20 < lat < 9.35 and -79.95 < lon < -79.85:
             return "Gatun"
         else:
             return "En tránsito"
     
     def _calcular_distancia(self, lat, lon):
-        """Calcula distancia aproximada recorrida en el Canal"""
-        # Punto de referencia: entrada Atlántico (9.36, -79.92)
         lat_ref = 9.36
         lon_ref = -79.92
         distancia = np.sqrt((lat - lat_ref)**2 + (lon - lon_ref)**2) * 111
         return max(0, min(80, distancia))
     
     def _calcular_progreso(self, lat, lon):
-        """Calcula el progreso en el Canal (0-100%)"""
         distancia = self._calcular_distancia(lat, lon)
         return min(100, (distancia / 80) * 100)
 
 # ==========================================
-# 2. SISTEMA DE SEGUIMIENTO DE BARCOS
+# 2. CLIENTE OPENWEATHER
+# ==========================================
+
+class ClienteOpenWeather:
+    def __init__(self):
+        self.api_key = OPENWEATHER_API_KEY
+        self.base_url = OPENWEATHER_BASE_URL
+        self.coords = CANAL_COORDS
+        
+    def obtener_clima_actual(self):
+        url = f"{self.base_url}/weather"
+        params = {
+            "lat": self.coords["lat"],
+            "lon": self.coords["lon"],
+            "appid": self.api_key,
+            "units": "metric"
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                datos = response.json()
+                return {
+                    "temperatura": datos["main"]["temp"],
+                    "sensacion_termica": datos["main"]["feels_like"],
+                    "humedad": datos["main"]["humidity"],
+                    "presion": datos["main"]["pressure"],
+                    "viento": datos["wind"]["speed"],
+                    "descripcion": datos["weather"][0]["description"],
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                logger.error(f"❌ Error OpenWeather: {response.status_code}")
+                return None
+        except Exception as e:
+            logger.error(f"❌ Error conexión OpenWeather: {e}")
+            return None
+    
+    def obtener_estado_maritimo(self):
+        clima = self.obtener_clima_actual()
+        if not clima:
+            return None
+        
+        viento = clima["viento"]
+        if viento < 5:
+            estado_mar = "Calmo"
+            nivel_oleaje = "Bajo (<0.5m)"
+        elif viento < 15:
+            estado_mar = "Moderado"
+            nivel_oleaje = "Medio (0.5-1.5m)"
+        elif viento < 25:
+            estado_mar = "Fuerte"
+            nivel_oleaje = "Alto (1.5-3m)"
+        else:
+            estado_mar = "Muy fuerte"
+            nivel_oleaje = "Muy alto (>3m)"
+        
+        return {
+            "estado_mar": estado_mar,
+            "nivel_oleaje": nivel_oleaje,
+            "visibilidad": "Buena" if clima["humedad"] < 80 else "Reducida",
+            "recomendacion": self._recomendar_navegacion(viento)
+        }
+    
+    def _recomendar_navegacion(self, viento):
+        if viento < 10:
+            return "✅ Navegación segura"
+        elif viento < 20:
+            return "⚠️ Precaución recomendada"
+        else:
+            return "🔴 Restricciones posibles"
+
+# ==========================================
+# 3. SISTEMA DE SEGUIMIENTO DE BARCOS
 # ==========================================
 
 class SistemaSeguimientoBarcos:
-    """Registra el paso de barcos por esclusas y todo su recorrido"""
-    
     def __init__(self):
         self.historial_pasos = []
         self.barcos_en_transito = {}
@@ -339,7 +426,6 @@ class SistemaSeguimientoBarcos:
             "tiempo_espera": tiempo_espera
         })
         
-        # Actualizar posición
         self.barcos_en_transito[barco["nombre"]]["posiciones"].append({
             "timestamp": datetime.now().isoformat(),
             "lat": barco["lat"],
@@ -360,7 +446,6 @@ class SistemaSeguimientoBarcos:
     
     def registrar_salida_canal(self, barco: Dict, distancia_final: float):
         if barco["nombre"] in self.barcos_en_transito:
-            # Registrar recorrido completo
             recorrido = {
                 "timestamp": datetime.now().isoformat(),
                 "barco": barco["nombre"],
@@ -422,7 +507,6 @@ class SistemaSeguimientoBarcos:
             return {"estado": "No encontrado"}
     
     def obtener_recorrido_barco(self, nombre_barco):
-        """Obtiene el recorrido completo de un barco"""
         if nombre_barco in self.barcos_en_transito:
             return self.barcos_en_transito[nombre_barco]["posiciones"]
         
@@ -454,89 +538,10 @@ class SistemaSeguimientoBarcos:
         return df
 
 # ==========================================
-# 3. CLIENTE OPENWEATHER
-# ==========================================
-
-class ClienteOpenWeather:
-    """Cliente para OpenWeather con datos climáticos reales"""
-    
-    def __init__(self):
-        self.api_key = OPENWEATHER_API_KEY
-        self.base_url = OPENWEATHER_BASE_URL
-        self.coords = CANAL_COORDS
-        
-    def obtener_clima_actual(self):
-        """Obtiene clima actual en el Canal de Panamá"""
-        url = f"{self.base_url}/weather"
-        params = {
-            "lat": self.coords["lat"],
-            "lon": self.coords["lon"],
-            "appid": self.api_key,
-            "units": "metric"
-        }
-        
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            if response.status_code == 200:
-                datos = response.json()
-                return {
-                    "temperatura": datos["main"]["temp"],
-                    "sensacion_termica": datos["main"]["feels_like"],
-                    "humedad": datos["main"]["humidity"],
-                    "presion": datos["main"]["pressure"],
-                    "viento": datos["wind"]["speed"],
-                    "descripcion": datos["weather"][0]["description"],
-                    "timestamp": datetime.now().isoformat()
-                }
-            else:
-                logger.error(f"❌ Error OpenWeather: {response.status_code}")
-                return None
-        except Exception as e:
-            logger.error(f"❌ Error conexión OpenWeather: {e}")
-            return None
-    
-    def obtener_estado_maritimo(self):
-        """Obtiene condiciones marítimas adicionales"""
-        clima = self.obtener_clima_actual()
-        if not clima:
-            return None
-        
-        viento = clima["viento"]
-        if viento < 5:
-            estado_mar = "Calmo"
-            nivel_oleaje = "Bajo (<0.5m)"
-        elif viento < 15:
-            estado_mar = "Moderado"
-            nivel_oleaje = "Medio (0.5-1.5m)"
-        elif viento < 25:
-            estado_mar = "Fuerte"
-            nivel_oleaje = "Alto (1.5-3m)"
-        else:
-            estado_mar = "Muy fuerte"
-            nivel_oleaje = "Muy alto (>3m)"
-        
-        return {
-            "estado_mar": estado_mar,
-            "nivel_oleaje": nivel_oleaje,
-            "visibilidad": "Buena" if clima["humedad"] < 80 else "Reducida",
-            "recomendacion": self._recomendar_navegacion(viento)
-        }
-    
-    def _recomendar_navegacion(self, viento):
-        if viento < 10:
-            return "✅ Navegación segura"
-        elif viento < 20:
-            return "⚠️ Precaución recomendada"
-        else:
-            return "🔴 Restricciones posibles"
-
-# ==========================================
 # 4. SISTEMA DE DATOS REALES
 # ==========================================
 
 class SistemaDatosReales:
-    """Integra datos reales de AISStream y OpenWeather"""
-    
     def __init__(self):
         self.cliente_ais = ClienteAIS()
         self.cliente_clima = ClienteOpenWeather()
@@ -546,12 +551,10 @@ class SistemaDatosReales:
         self.ultima_actualizacion = None
         
     def iniciar(self):
-        """Inicia las conexiones"""
         self.cliente_ais.iniciar_conexion()
         self.actualizar_todo()
         
     def actualizar_todo(self):
-        """Actualiza todas las fuentes de datos"""
         try:
             self.barcos = self.cliente_ais.procesar_barcos_formateados()
             self.clima = self.cliente_clima.obtener_clima_actual()
@@ -580,16 +583,14 @@ class SistemaDatosReales:
         return estado
 
 # ==========================================
-# 5. SISTEMA DE TIEMPO REAL (60 SEGUNDOS)
+# 5. SISTEMA DE TIEMPO REAL
 # ==========================================
 
 class SistemaTiempoReal:
-    """Sistema de actualización automática en tiempo real - 60 segundos"""
-    
     def __init__(self):
         self.ultima_actualizacion = None
         self.proxima_actualizacion = None
-        self.intervalo_segundos = 60  # 1 minuto
+        self.intervalo_segundos = 60
         self.actualizando = False
         self.historial_actualizaciones = []
         self.errores_actualizacion = []
@@ -597,7 +598,6 @@ class SistemaTiempoReal:
         self.thread_actualizacion = None
         
     def iniciar(self):
-        """Inicia el sistema de actualización en tiempo real"""
         if self.ejecutando:
             return
         
@@ -607,7 +607,6 @@ class SistemaTiempoReal:
         logger.info("🔄 Sistema de tiempo real iniciado (60s)")
         
     def _loop_actualizacion(self):
-        """Loop principal de actualización"""
         while self.ejecutando:
             try:
                 self.actualizar_todo()
@@ -617,7 +616,6 @@ class SistemaTiempoReal:
                 time.sleep(5)
     
     def actualizar_todo(self):
-        """Actualiza todos los datos del sistema"""
         if self.actualizando:
             return
         
@@ -638,10 +636,8 @@ class SistemaTiempoReal:
                 nuevos_aprendizajes = st.session_state.anayansi.aprender_automaticamente(df_actual, stats_actuales)
                 st.session_state.nuevos_aprendizajes = nuevos_aprendizajes
             
-            # Actualizar seguimiento con los barcos en tránsito
             if len(df_actual) > 0 and 'sistema_seguimiento' in st.session_state:
                 for _, barco in df_actual.iterrows():
-                    # Solo registrar barcos que están en esclusas
                     if barco.get('esclusa', '') in ['Gatun', 'Pedro Miguel', 'Miraflores']:
                         st.session_state.sistema_seguimiento.registrar_paso_esclusa(
                             barco.to_dict(),
@@ -682,7 +678,6 @@ class SistemaTiempoReal:
             return False
     
     def _guardar_historico(self, df, stats):
-        """Guarda datos históricos"""
         try:
             df.to_csv("datos_historicos/barcos_tiempo_real.csv", index=False)
             
@@ -711,7 +706,6 @@ class SistemaTiempoReal:
             logger.error(f"Error guardando histórico: {e}")
     
     def obtener_tendencia(self):
-        """Obtiene tendencia de los últimos datos"""
         try:
             if os.path.exists("datos_historicos/historico_completo.json"):
                 with open("datos_historicos/historico_completo.json", "r") as f:
@@ -820,7 +814,6 @@ def crear_grafico_progreso_barcos(sistema_seguimiento):
     return None
 
 def crear_grafico_recorrido_barco(posiciones):
-    """Crea un gráfico del recorrido de un barco en el Canal"""
     if not posiciones:
         return None
     
@@ -851,7 +844,6 @@ def crear_grafico_recorrido_barco(posiciones):
     return fig
 
 def crear_grafico_tiempo_real():
-    """Crea un gráfico de evolución en tiempo real"""
     historico = sistema_tiempo_real.obtener_tendencia()
     
     if historico and len(historico) > 2:
@@ -910,8 +902,6 @@ def crear_grafico_tiempo_real():
 
 @st.cache_data(ttl=60)
 def generar_datos():
-    """Genera datos combinando fuentes reales y simulación"""
-    
     sistema_datos.actualizar_todo()
     barcos_reales = sistema_datos.obtener_barcos_activos()
     
@@ -926,7 +916,6 @@ def generar_datos():
     return df
 
 def generar_barcos_simulados(n):
-    """Genera barcos simulados realistas (fallback)"""
     np.random.seed(int(time.time() / 30) % 1000)
     tipos = ["Portacontenedores", "Granelero", "Petrolero", "Gasero", "Carguero", "Crucero"]
     estados = ["Navegando", "Navegando", "Navegando", "En espera", "Entrando"]
@@ -937,14 +926,15 @@ def generar_barcos_simulados(n):
     barcos = []
     for i in range(n):
         progreso = np.random.uniform(0, 100)
-        pos_idx = int((progreso / 100) * (len(posiciones) - 1))
+        lat = 8.90 + (progreso / 100) * 0.40
+        lon = -79.95 + (progreso / 100) * 0.40
         
         barco = {
             "nombre": f"BARCO_{i+1:04d}",
             "tipo": random.choice(tipos),
             "direccion": "Sur" if np.random.random() < 0.5 else "Norte",
-            "lat": 9.0 + np.random.normal(0, 0.15),
-            "lon": -79.7 + np.random.normal(0, 0.15),
+            "lat": lat,
+            "lon": lon,
             "velocidad": np.random.uniform(4, 16) if random.random() < 0.7 else np.random.uniform(0, 3),
             "estado": random.choice(estados),
             "esclusa": random.choice(esclusas),
@@ -1070,7 +1060,6 @@ def crear_mapa_mejorado(df):
 # ==========================================
 
 def mostrar_indicador_datos_reales():
-    """Muestra el estado de los datos reales en el sidebar"""
     estado = sistema_datos.verificar_estado_conexiones()
     
     st.markdown("---")
@@ -1098,7 +1087,6 @@ def mostrar_indicador_datos_reales():
             st.rerun()
 
 def mostrar_indicador_tiempo_real():
-    """Muestra el estado de actualización en tiempo real (60s)"""
     sistema = st.session_state.sistema_tiempo_real
     
     st.markdown("---")
@@ -1129,7 +1117,6 @@ def mostrar_indicador_tiempo_real():
             st.rerun()
 
 def mostrar_clima_dashboard():
-    """Muestra las tarjetas de clima en el dashboard"""
     clima = sistema_datos.obtener_clima_actual()
     estado_mar = sistema_datos.cliente_clima.obtener_estado_maritimo()
     
@@ -1158,7 +1145,6 @@ def mostrar_clima_dashboard():
                 st.error(f"🚢 {rec}")
 
 def mostrar_grafico_tiempo_real():
-    """Muestra el gráfico de evolución en tiempo real"""
     fig = crear_grafico_tiempo_real()
     if fig:
         st.plotly_chart(fig, use_container_width=True)
@@ -1170,7 +1156,6 @@ def mostrar_grafico_tiempo_real():
 # ==========================================
 
 def simular_paso_barcos(df, sistema_seguimiento):
-    """Simula el paso de barcos por esclusas para demostración"""
     if isinstance(df, pd.DataFrame):
         barcos_aleatorios = df.sample(min(5, len(df)))
     else:
@@ -1221,7 +1206,6 @@ if "sistema_tiempo_real" not in st.session_state:
 
 sistema_tiempo_real = st.session_state.sistema_tiempo_real
 
-# Cargar datos iniciales
 if "df" not in st.session_state or "stats" not in st.session_state:
     df = generar_datos()
     stats = analizar(df)
@@ -1250,7 +1234,6 @@ with st.sidebar:
     col1.metric("Norte", stats["norte"])
     col2.metric("Sur", stats["sur"])
     
-    # Indicadores de tiempo real
     mostrar_indicador_tiempo_real()
     mostrar_indicador_datos_reales()
     
@@ -1732,7 +1715,6 @@ with tab9:
     st.markdown("### 📍 Recorridos de Barcos en el Canal")
     st.caption("Seguimiento completo del movimiento de barcos dentro del Canal")
     
-    # Seleccionar barco
     barcos_disponibles = list(sistema_seguimiento.barcos_en_transito.keys()) + [r["barco"] for r in sistema_seguimiento.recorridos_completos[-10:]]
     
     if barcos_disponibles:
@@ -1752,14 +1734,12 @@ with tab9:
             
             st.markdown("---")
             
-            # Gráfico del recorrido
             fig_recorrido = crear_grafico_recorrido_barco(posiciones)
             if fig_recorrido:
                 st.plotly_chart(fig_recorrido, use_container_width=True)
             else:
                 st.info("⏳ No hay suficientes datos de recorrido para este barco")
             
-            # Tabla de posiciones
             if posiciones:
                 st.markdown("#### 📋 Historial de Posiciones")
                 df_pos = pd.DataFrame(posiciones)
