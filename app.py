@@ -86,7 +86,7 @@ class MotorDecisionAutonoma:
         }
         self.umbrales_criticos = {
             "congestion_maxima": 0.85,
-            "tiempo_espera_max": 120,
+            "tiempo_espera_max": 120.0,
             "velocidad_minima": 3.0,
             "distancia_seguridad": 0.3
         }
@@ -1285,7 +1285,7 @@ with tab5:
     col3.metric("🔔 Alertas", sistema.metricas_sistema["alertas_generadas"])
     col4.metric("⚡ Eficiencia", f"{sistema.metricas_sistema['optimizaciones_realizadas']}")
 
-# TAB 6: CONFIGURACIÓN IA
+# TAB 6: CONFIGURACIÓN IA - CORREGIDA
 with tab6:
     st.markdown("### ⚙️ Configuración de la IA")
     
@@ -1312,13 +1312,15 @@ with tab6:
     st.markdown("#### 🎚️ Umbrales Críticos")
     col1, col2 = st.columns(2)
     with col1:
+        # Convertir a float para consistencia - TODOS LOS VALORES SON FLOAT
         congestion_actual = float(sistema.motor_decision.umbrales_criticos["congestion_maxima"])
         st.slider("Congestión Máxima", 0.5, 1.0, congestion_actual, 0.05, key="umbral_congestion")
         
         espera_actual = float(sistema.motor_decision.umbrales_criticos["tiempo_espera_max"])
-        st.slider("Tiempo Espera Máx (min)", 30, 180, espera_actual, 5.0, key="umbral_espera")
+        st.slider("Tiempo Espera Máx (min)", 30.0, 180.0, espera_actual, 5.0, key="umbral_espera")
     
     with col2:
+        # CORREGIDOS: TODOS los valores son float
         velocidad_actual = float(sistema.motor_decision.umbrales_criticos["velocidad_minima"])
         st.slider("Velocidad Mínima (nudos)", 1.0, 6.0, velocidad_actual, 0.5, key="umbral_velocidad")
         
