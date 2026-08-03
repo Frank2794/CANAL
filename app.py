@@ -33,7 +33,7 @@ st.markdown("""
     div.stButton > button { background: #00b4d8; color: white; border-radius: 8px; border: none; padding: 0.3rem 1rem; font-size: 0.8rem; }
     .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 6px 12px; }
     .stTabs [aria-selected="true"] { background: #00b4d8; color: white; border-radius: 6px; }
-    .boat-info { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 8px; margin: 4px 0; font-size: 0.85rem; }
+    .esclusa-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -51,12 +51,6 @@ class AnayansiIA:
         self.predicciones = []
         self.razonamiento = []
         self.confianza = 0.85
-        self.personalidad = {
-            "nombre": "Anayansi",
-            "significado": "Sabiduría del mar",
-            "tono": "Sabio y amable",
-            "estilo": "Explicativo y detallado"
-        }
     
     def recordar(self, mensaje):
         self.memoria_conversaciones.append({
@@ -282,7 +276,7 @@ class AnayansiIA:
         return "\n".join(lineas)
 
 # ==========================================
-# GENERAR DATOS
+# GENERAR DATOS - CON COLUMNAS COMPLETAS
 # ==========================================
 
 @st.cache_data(ttl=60)
@@ -375,7 +369,6 @@ def analizar(df):
 def crear_mapa_mejorado(df):
     """Crea un mapa interactivo con más información"""
     
-    # Mapa principal con burbujas de tamaño variable
     fig = px.scatter_mapbox(
         df,
         lat="lat",
@@ -388,10 +381,10 @@ def crear_mapa_mejorado(df):
             "velocidad": ":.1f",
             "esclusa": True,
             "eta_horas": ":.1f",
+            "prioridad": True,
             "eslora": True,
             "calado": True,
-            "carga": True,
-            "prioridad": True
+            "carga": True
         },
         color="prioridad",
         color_discrete_map={"Alta": "#ef4444", "Media": "#f59e0b", "Baja": "#10b981"},
@@ -435,7 +428,7 @@ def crear_mapa_mejorado(df):
 
 if "anayansi" not in st.session_state:
     st.session_state.anayansi = AnayansiIA()
-    st.session_state.chat = [{"rol": "anayansi", "msg": "🧠 ¡Hola! Soy **Anayansi**, la sabiduría del mar.\n\n**¿Qué puedo hacer?**\n• 🔮 **Predecir** congestión futura\n• 🧠 **Razonar** conectando información\n• 📊 **Analizar** patrones y tendencias\n• 💬 **Recordar** conversaciones anteriores\n• 🌊 **Responder** sobre barcos, esclusas, clima\n\n**Ejemplos:**\n• ¿Qué barcos están en Miraflores?\n• Predice la congestión para hoy\n• Explica por qué el CWT está alto\n• ¿Cómo está el clima y el viento?"}]
+    st.session_state.chat = [{"rol": "anayansi", "msg": "🧠 ¡Hola! Soy **Anayansi**, la sabiduría del mar.\n\n**¿Qué puedo hacer?**\n• 🔮 **Predecir** congestión futura\n• 🧠 **Razonar** conectando información\n• 📊 **Analizar** patrones y tendencias\n• 💬 **Recordar** conversaciones anteriores\n• 🌊 **Responder** sobre barcos, esclusas, clima"}]
     st.session_state.df = None
     st.session_state.stats = None
 
@@ -565,7 +558,6 @@ with tab1:
     fig = crear_mapa_mejorado(df)
     st.plotly_chart(fig, use_container_width=True)
     
-    # Información adicional del mapa
     st.markdown("---")
     st.markdown("#### 📊 Resumen del Mapa")
     col1, col2, col3 = st.columns(3)
@@ -574,8 +566,7 @@ with tab1:
     with col2:
         st.metric("⚙️ Esclusas activas", len(stats["esclusas"]))
     with col3:
-        prioridad_alta = stats["prioridad_alta"]
-        st.metric("🔴 Prioridad Alta", prioridad_alta)
+        st.metric("🔴 Prioridad Alta", stats["prioridad_alta"])
 
 # TAB 2: ANÁLISIS
 with tab2:
