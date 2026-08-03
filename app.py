@@ -13,9 +13,34 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple
 import hashlib
+import requests
+import os
+import threading
 
 # ==========================================
-# CONFIGURACIÓN
+# CONFIGURACIÓN DE APIS
+# ==========================================
+
+# AISStream.io
+AIS_API_KEY = "a81c935eddaee762e9523b53fc1201aafb308c87"
+AIS_BASE_URL = "https://api.aisstream.io/v1"
+
+# OpenWeather
+OPENWEATHER_API_KEY = "66fcd26ed1d5e44ffc760302076c88e1"
+OPENWEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5"
+
+# Área del Canal de Panamá
+CANAL_BBOX = {
+    "min_lat": 8.8,
+    "max_lat": 9.5,
+    "min_lon": -80.0,
+    "max_lon": -79.5
+}
+
+CANAL_COORDS = {"lat": 9.0, "lon": -79.6}
+
+# ==========================================
+# CONFIGURACIÓN DE LOGGING
 # ==========================================
 
 logging.basicConfig(
@@ -58,6 +83,12 @@ st.markdown("""
     .boat-info { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 8px; margin: 4px 0; font-size: 0.85rem; }
 </style>
 """, unsafe_allow_html=True)
+
+# ==========================================
+# CREAR CARPETAS PARA DATOS HISTÓRICOS
+# ==========================================
+
+os.makedirs("datos_historicos", exist_ok=True)
 
 # ==========================================
 # 1. MOTOR DE DECISIÓN AUTÓNOMA
@@ -118,6 +149,9 @@ class MotorDecisionAutonoma:
         }
         self.historial_decisiones.append(decision)
         self.decisiones_tomadas += 1
+        
+        # Guardar decisión en almacenamiento persistente
+        guardar_decision_automatica(decision)
         
         if self.decisiones_tomadas > 10:
             self._auto_evaluar()
@@ -795,7 +829,469 @@ class SistemaCompleto:
         }
 
 # ==========================================
-# 8. SISTEMA DE SEGUIMIENTO DE BARCOS
+# 8. CLIENTE AISSTREAM.IO (DATOS REALES)
+# ==========================================
+
+class ClienteAIS:
+    """Cliente para AISStream.io con datos en tiempo real"""
+    
+    def __init__(self):
+        self.api_key = AIS_API_KEY
+        self.base_url = AIS_BASE_URL
+        self.barcos_activos = []
+        self.ultima_actualizacion = None
+        self.bbox = CANAL_BBOX
+        
+    def obtener_barcos_canal(self):
+        """Obtiene barcos en el área del Canal de Panamá"""
+        url = f"{self.base_url}/vessels"
+        params = {
+            "apikey": self.api_key,
+            "bounds": f"{self.bbox['min_lat']},{self.bbox['min_lon']},{self.bbox['max_lat']},{self.bbox['max_lon']}"
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=15)
+            if response.status_code == 200:
+                datos = response.json()
+                self.barcos_activos = datos.get("vessels", [])
+                self.ultima_actualizacion = datetime.now()
+                logger.info(f"✅ {len(self.barcos_activos)} barcos obtenidos de AIS")
+                return self.barcos_activos
+            else:
+                logger.error(f"❌ Error AIS: {response.status_code}")
+                return []
+        except Exception as e:
+            logger.error(f"❌ Error conexión AIS: {e}")
+            return []
+    
+    def procesar_barcos_formateados(self):
+        """Procesa y formatea los barcos para el sistema"""
+        barcos = self.obtener_barcos_canal()
+        if not barcos:
+            return []
+        
+        barcos_formateados = []
+        for barco in barcos:
+            lat = barco.get("lat", 0)
+            lon = barco.get("lon", 0)
+            
+            if 8.85 < lat < 9.4 and -79.95 < lon < -79.5:
+                esclusa = self._determinar_esclusa(lat, lon)
+                direccion = self._determinar_direccion(lat)
+                estado = self._determinar_estado(barco.get("speed", 0))
+                
+                barco_formateado = {
+                    "nombre": barco.get("name", f"BARCO_{barco.get('mmsi', '')}"),
+                    "mmsi": barco.get("mmsi", ""),
+                    "tipo": barco.get("ship_type", "Desconocido"),
+                    "direccion": direccion,
+                    "lat": lat,
+                    "lon": lon,
+                    "velocidad": barco.get("speed", 0),
+                    "estado": estado,
+                    "esclusa": esclusa,
+                    "eta_horas": np.random.uniform(0.5, 6),
+                    "prioridad": "Media",
+                    "eslora": barco.get("length", 200),
+                    "calado": barco.get("draught", 10),
+                    "carga": barco.get("cargo", 5000),
+                    "timestamp": datetime.now().isoformat()
+                }
+                barcos_formateados.append(barco_formateado)
+        
+        return barcos_formateados
+    
+    def _determinar_esclusa(self, lat, lon):
+        if 8.95 < lat < 9.05 and -79.6 < lon < -79.55:
+            return "Miraflores"
+        elif 9.05 < lat < 9.15 and -79.65 < lon < -79.58:
+            return "Pedro Miguel"
+        elif 9.2 < lat < 9.35 and -79.95 < lon < -79.85:
+            return "Gatun"
+        else:
+            return "En tránsito"
+    
+    def _determinar_direccion(self, lat):
+        if lat > 9.15:
+            return "Sur"
+        elif lat < 9.05:
+            return "Norte"
+        else:
+            return "Navegando"
+    
+    def _determinar_estado(self, velocidad):
+        if velocidad < 1:
+            return "En espera"
+        elif velocidad < 5:
+            return "Navegando lento"
+        else:
+            return "Navegando"
+
+# ==========================================
+# 9. CLIENTE OPENWEATHER (DATOS REALES)
+# ==========================================
+
+class ClienteOpenWeather:
+    """Cliente para OpenWeather con datos climáticos reales"""
+    
+    def __init__(self):
+        self.api_key = OPENWEATHER_API_KEY
+        self.base_url = OPENWEATHER_BASE_URL
+        self.coords = CANAL_COORDS
+        
+    def obtener_clima_actual(self):
+        """Obtiene clima actual en el Canal de Panamá"""
+        url = f"{self.base_url}/weather"
+        params = {
+            "lat": self.coords["lat"],
+            "lon": self.coords["lon"],
+            "appid": self.api_key,
+            "units": "metric"
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                datos = response.json()
+                return {
+                    "temperatura": datos["main"]["temp"],
+                    "sensacion_termica": datos["main"]["feels_like"],
+                    "humedad": datos["main"]["humidity"],
+                    "presion": datos["main"]["pressure"],
+                    "viento": datos["wind"]["speed"],
+                    "viento_direccion": datos["wind"].get("deg", 0),
+                    "descripcion": datos["weather"][0]["description"],
+                    "icono": datos["weather"][0]["icon"],
+                    "ciudad": datos.get("name", "Panamá"),
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                logger.error(f"❌ Error OpenWeather: {response.status_code}")
+                return None
+        except Exception as e:
+            logger.error(f"❌ Error conexión OpenWeather: {e}")
+            return None
+    
+    def obtener_estado_maritimo(self):
+        """Obtiene condiciones marítimas adicionales"""
+        clima = self.obtener_clima_actual()
+        if not clima:
+            return None
+        
+        viento = clima["viento"]
+        
+        if viento < 5:
+            estado_mar = "Calmo"
+            nivel_oleaje = "Bajo (<0.5m)"
+        elif viento < 15:
+            estado_mar = "Moderado"
+            nivel_oleaje = "Medio (0.5-1.5m)"
+        elif viento < 25:
+            estado_mar = "Fuerte"
+            nivel_oleaje = "Alto (1.5-3m)"
+        else:
+            estado_mar = "Muy fuerte"
+            nivel_oleaje = "Muy alto (>3m)"
+        
+        return {
+            "estado_mar": estado_mar,
+            "nivel_oleaje": nivel_oleaje,
+            "visibilidad": "Buena" if clima["humedad"] < 80 else "Reducida",
+            "recomendacion": self._recomendar_navegacion(viento)
+        }
+    
+    def _recomendar_navegacion(self, viento):
+        if viento < 10:
+            return "✅ Navegación segura"
+        elif viento < 20:
+            return "⚠️ Precaución recomendada"
+        else:
+            return "🔴 Restricciones posibles"
+
+# ==========================================
+# 10. SISTEMA DE DATOS REALES INTEGRADO
+# ==========================================
+
+class SistemaDatosReales:
+    """Integra todas las fuentes de datos reales"""
+    
+    def __init__(self):
+        self.cliente_ais = ClienteAIS()
+        self.cliente_clima = ClienteOpenWeather()
+        self.barcos = []
+        self.clima = {}
+        self.estado_maritimo = {}
+        self.ultima_actualizacion = None
+        self.actualizando = False
+        
+    def actualizar_todo(self):
+        """Actualiza todas las fuentes de datos"""
+        if self.actualizando:
+            return False
+        
+        self.actualizando = True
+        try:
+            self.barcos = self.cliente_ais.procesar_barcos_formateados()
+            self.clima = self.cliente_clima.obtener_clima_actual()
+            self.estado_maritimo = self.cliente_clima.obtener_estado_maritimo()
+            self.ultima_actualizacion = datetime.now()
+            self.actualizando = False
+            return True
+        except Exception as e:
+            logger.error(f"Error actualizando datos reales: {e}")
+            self.actualizando = False
+            return False
+    
+    def obtener_barcos_activos(self):
+        if not self.barcos and self.ultima_actualizacion:
+            if (datetime.now() - self.ultima_actualizacion).seconds > 60:
+                self.actualizar_todo()
+        return self.barcos
+    
+    def obtener_clima_actual(self):
+        if not self.clima:
+            self.actualizar_todo()
+        return self.clima
+    
+    def obtener_estado_maritimo(self):
+        if not self.estado_maritimo:
+            self.actualizar_todo()
+        return self.estado_maritimo
+    
+    def verificar_estado_conexiones(self):
+        estado = {
+            "ais": self.cliente_ais.ultima_actualizacion is not None,
+            "clima": self.clima is not None,
+            "ultima_actualizacion": self.ultima_actualizacion
+        }
+        return estado
+
+# ==========================================
+# 11. SISTEMA DE ALMACENAMIENTO PERSISTENTE
+# ==========================================
+
+class AlmacenamientoPersistente:
+    """Sistema de almacenamiento persistente para todos los datos"""
+    
+    def __init__(self):
+        self.carpeta_datos = "datos_historicos"
+        self.archivos = {
+            "aprendizaje": "aprendizaje.json",
+            "decisiones": "decisiones.json",
+            "logs": "logs.json",
+            "alertas": "alertas.json",
+            "seguimiento": "seguimiento.json",
+            "configuracion": "configuracion.json"
+        }
+        self._crear_carpetas()
+    
+    def _crear_carpetas(self):
+        """Crea las carpetas necesarias"""
+        os.makedirs(self.carpeta_datos, exist_ok=True)
+        for archivo in self.archivos.values():
+            ruta = os.path.join(self.carpeta_datos, archivo)
+            if not os.path.exists(ruta):
+                with open(ruta, "w") as f:
+                    json.dump([], f)
+    
+    def guardar(self, tipo, datos):
+        """Guarda datos en el almacenamiento persistente"""
+        if tipo not in self.archivos:
+            return False
+        
+        ruta = os.path.join(self.carpeta_datos, self.archivos[tipo])
+        
+        try:
+            with open(ruta, "r") as f:
+                historico = json.load(f)
+            
+            if isinstance(historico, list):
+                historico.append(datos)
+            else:
+                historico = [datos]
+            
+            if len(historico) > 1000:
+                historico = historico[-1000:]
+            
+            with open(ruta, "w") as f:
+                json.dump(historico, f, default=str)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error guardando {tipo}: {e}")
+            return False
+    
+    def cargar(self, tipo, limite=None):
+        """Carga datos del almacenamiento persistente"""
+        if tipo not in self.archivos:
+            return []
+        
+        ruta = os.path.join(self.carpeta_datos, self.archivos[tipo])
+        
+        try:
+            with open(ruta, "r") as f:
+                datos = json.load(f)
+                if limite and isinstance(datos, list):
+                    return datos[-limite:]
+                return datos
+        except:
+            return []
+    
+    def limpiar(self, tipo, limite=100):
+        """Limpia datos antiguos del almacenamiento"""
+        if tipo not in self.archivos:
+            return
+        
+        ruta = os.path.join(self.carpeta_datos, self.archivos[tipo])
+        
+        try:
+            with open(ruta, "r") as f:
+                datos = json.load(f)
+            
+            if isinstance(datos, list) and len(datos) > limite:
+                datos = datos[-limite:]
+                with open(ruta, "w") as f:
+                    json.dump(datos, f)
+        except:
+            pass
+
+# ==========================================
+# 12. FUNCIONES PARA GUARDAR DATOS AUTOMÁTICAMENTE
+# ==========================================
+
+def guardar_aprendizaje_automatico(texto):
+    """Guarda automáticamente los aprendizajes de la IA"""
+    datos = {
+        "timestamp": datetime.now().isoformat(),
+        "texto": texto,
+        "fuente": "aprendizaje_automatico"
+    }
+    almacenamiento.guardar("aprendizaje", datos)
+
+def guardar_decision_automatica(decision):
+    """Guarda automáticamente las decisiones de la IA"""
+    datos = {
+        "timestamp": datetime.now().isoformat(),
+        "decision": decision,
+        "contexto": "operativo"
+    }
+    almacenamiento.guardar("decisiones", datos)
+
+def guardar_alerta_automatica(alerta):
+    """Guarda automáticamente las alertas generadas"""
+    datos = {
+        "timestamp": datetime.now().isoformat(),
+        "alerta": alerta
+    }
+    almacenamiento.guardar("alertas", datos)
+
+# ==========================================
+# 13. SISTEMA DE ACTUALIZACIÓN AUTOMÁTICA
+# ==========================================
+
+class SistemaActualizacionAutomatica:
+    """Sistema de actualización automática de datos en tiempo real"""
+    
+    def __init__(self):
+        self.ultima_actualizacion = None
+        self.proxima_actualizacion = None
+        self.intervalo_segundos = 120  # 2 minutos
+        self.actualizando = False
+        self.historial_actualizaciones = []
+        self.errores_actualizacion = []
+        
+    def actualizar_datos(self):
+        """Actualiza todos los datos del sistema"""
+        if self.actualizando:
+            return False
+        
+        self.actualizando = True
+        inicio = datetime.now()
+        
+        try:
+            sistema_datos.actualizar_todo()
+            
+            df_actual = pd.DataFrame(sistema_datos.barcos)
+            stats_actuales = analizar(df_actual)
+            
+            self._guardar_historico(df_actual, stats_actuales)
+            
+            nuevos_aprendizajes = anayansi.aprender_automaticamente(df_actual, stats_actuales)
+            
+            fin = datetime.now()
+            duracion = (fin - inicio).total_seconds()
+            
+            registro = {
+                "timestamp": fin.isoformat(),
+                "duracion": round(duracion, 2),
+                "barcos": len(df_actual),
+                "aprendizajes": len(nuevos_aprendizajes),
+                "exito": True
+            }
+            self.historial_actualizaciones.append(registro)
+            
+            if len(self.historial_actualizaciones) > 1000:
+                self.historial_actualizaciones = self.historial_actualizaciones[-1000:]
+            
+            self.ultima_actualizacion = fin
+            self.proxima_actualizacion = fin + timedelta(seconds=self.intervalo_segundos)
+            
+            logger.info(f"✅ Actualización automática completada en {duracion:.2f}s")
+            self.actualizando = False
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error en actualización automática: {e}")
+            self.errores_actualizacion.append({
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e)
+            })
+            self.actualizando = False
+            return False
+    
+    def _guardar_historico(self, df, stats):
+        """Guarda datos históricos en archivos JSON"""
+        try:
+            df.to_csv("datos_historicos/barcos_ultima_actualizacion.csv", index=False)
+            
+            with open("datos_historicos/stats_ultima_actualizacion.json", "w") as f:
+                json.dump(stats, f, default=str)
+            
+            historico_barcos = []
+            if os.path.exists("datos_historicos/historico_barcos.json"):
+                with open("datos_historicos/historico_barcos.json", "r") as f:
+                    historico_barcos = json.load(f)
+            
+            registro_historico = {
+                "timestamp": datetime.now().isoformat(),
+                "barcos": df.to_dict('records'),
+                "stats": stats
+            }
+            historico_barcos.append(registro_historico)
+            
+            if len(historico_barcos) > 100:
+                historico_barcos = historico_barcos[-100:]
+            
+            with open("datos_historicos/historico_barcos.json", "w") as f:
+                json.dump(historico_barcos, f, default=str)
+                
+        except Exception as e:
+            logger.error(f"Error guardando histórico: {e}")
+    
+    def obtener_historico(self, limite=50):
+        """Obtiene datos históricos"""
+        try:
+            if os.path.exists("datos_historicos/historico_barcos.json"):
+                with open("datos_historicos/historico_barcos.json", "r") as f:
+                    historico = json.load(f)
+                    return historico[-limite:]
+        except:
+            pass
+        return []
+
+# ==========================================
+# 14. SISTEMA DE SEGUIMIENTO DE BARCOS
 # ==========================================
 
 class SistemaSeguimientoBarcos:
@@ -809,7 +1305,6 @@ class SistemaSeguimientoBarcos:
         self.historial_congestion = []
         
     def registrar_paso_esclusa(self, barco: Dict, esclusa: str, tiempo_espera: float = 0):
-        """Registra el paso de un barco por una esclusa"""
         registro = {
             "timestamp": datetime.now().isoformat(),
             "barco": barco["nombre"],
@@ -824,8 +1319,6 @@ class SistemaSeguimientoBarcos:
         }
         self.historial_pasos.append(registro)
         self.registro_esclusas[esclusa].append(registro)
-        
-        # Registrar congestión
         self._registrar_congestion(esclusa, len(self.registro_esclusas[esclusa]))
         
         if barco["nombre"] not in self.barcos_en_transito:
@@ -844,7 +1337,6 @@ class SistemaSeguimientoBarcos:
         return registro
     
     def _registrar_congestion(self, esclusa: str, barcos_esperando: int):
-        """Registra nivel de congestión en esclusas"""
         self.historial_congestion.append({
             "timestamp": datetime.now().isoformat(),
             "esclusa": esclusa,
@@ -920,7 +1412,7 @@ class SistemaSeguimientoBarcos:
         return df
 
 # ==========================================
-# FUNCIONES PARA GRÁFICOS DE SEGUIMIENTO
+# 15. FUNCIONES PARA GRÁFICOS DE SEGUIMIENTO
 # ==========================================
 
 def crear_grafico_tiempos_esclusas(sistema_seguimiento):
@@ -1018,7 +1510,6 @@ def crear_grafico_progreso_barcos(sistema_seguimiento):
 def crear_grafico_tiempos_barcos(sistema_seguimiento):
     if sistema_seguimiento.barcos_completados:
         df = pd.DataFrame(sistema_seguimiento.barcos_completados)
-        df["barco"] = df["barco"]
         fig = px.bar(
             df,
             x="barco",
@@ -1033,52 +1524,162 @@ def crear_grafico_tiempos_barcos(sistema_seguimiento):
     return None
 
 # ==========================================
-# GENERAR DATOS - COMPLETO
+# 16. FUNCIONES PARA ANÁLISIS HISTÓRICO
 # ==========================================
 
-@st.cache_data(ttl=30)
-def generar_datos():
-    np.random.seed(int(time.time() / 30) % 1000)
-    n = np.random.randint(35, 55)
+def analizar_tendencia_historica(horas=24):
+    """Analiza tendencia histórica de CWT"""
+    historico = sistema_actualizacion.obtener_historico(limite=100)
     
-    puntos = [(9.36, -79.92), (9.27, -79.92), (9.20, -79.88), (9.015, -79.62), (8.995, -79.585), (8.90, -79.52)]
-    tipos = ["Portacontenedores", "Granelero", "Petrolero", "Gasero", "Carguero", "Crucero", "Remolcador", "Pesquero"]
+    if not historico:
+        return {
+            "tendencia": "Sin datos suficientes",
+            "cwt_actual": 0,
+            "cwt_promedio": 0,
+            "cwt_minimo": 0,
+            "cwt_maximo": 0,
+            "variacion": 0
+        }
+    
+    cwt_values = []
+    for registro in historico:
+        if "stats" in registro and "cwt" in registro["stats"]:
+            cwt_values.append(registro["stats"]["cwt"])
+    
+    if not cwt_values:
+        return {"tendencia": "Sin datos de CWT"}
+    
+    cwt_actual = cwt_values[-1] if cwt_values else 0
+    cwt_promedio = sum(cwt_values) / len(cwt_values) if cwt_values else 0
+    
+    if len(cwt_values) > 1:
+        cambio = (cwt_values[-1] - cwt_values[0]) / max(cwt_values[0], 1)
+        if cambio > 0.1:
+            tendencia = "📈 Aumentando"
+        elif cambio < -0.1:
+            tendencia = "📉 Disminuyendo"
+        else:
+            tendencia = "📊 Estable"
+    else:
+        tendencia = "📊 Datos insuficientes"
+    
+    return {
+        "tendencia": tendencia,
+        "cwt_actual": round(cwt_actual, 1),
+        "cwt_promedio": round(cwt_promedio, 1),
+        "cwt_minimo": round(min(cwt_values), 1),
+        "cwt_maximo": round(max(cwt_values), 1),
+        "variacion": round((cwt_values[-1] - cwt_values[0]) / max(cwt_values[0], 1) * 100, 1) if len(cwt_values) > 1 else 0,
+        "muestras": len(cwt_values)
+    }
+
+def obtener_estadisticas_historicas():
+    """Obtiene estadísticas completas de datos históricos"""
+    
+    aprendizajes = almacenamiento.cargar("aprendizaje")
+    decisiones = almacenamiento.cargar("decisiones")
+    alertas = almacenamiento.cargar("alertas")
+    logs = almacenamiento.cargar("logs")
+    
+    return {
+        "total_aprendizajes": len(aprendizajes),
+        "total_decisiones": len(decisiones),
+        "total_alertas": len(alertas),
+        "total_logs": len(logs),
+        "ultimo_aprendizaje": aprendizajes[-1] if aprendizajes else None,
+        "ultima_decision": decisiones[-1] if decisiones else None,
+        "ultima_alerta": alertas[-1] if alertas else None
+    }
+
+# ==========================================
+# 17. FUNCIÓN PARA SIMULAR PASO DE BARCOS (FALLBACK)
+# ==========================================
+
+def generar_barcos_simulados(n):
+    """Genera barcos simulados realistas (fallback cuando no hay datos reales)"""
+    np.random.seed(int(time.time() / 30) % 1000)
+    tipos = ["Portacontenedores", "Granelero", "Petrolero", "Gasero", "Carguero", "Crucero"]
     estados = ["Navegando", "Navegando", "Navegando", "En espera", "Entrando"]
     esclusas = ["Gatun", "Pedro Miguel", "Miraflores"]
     prioridades = ["Alta", "Media", "Baja"]
     
     barcos = []
     for i in range(n):
-        idx = np.random.randint(0, len(puntos))
-        lat, lon = puntos[idx]
-        lat += np.random.normal(0, 0.02)
-        lon += np.random.normal(0, 0.02)
-        direccion = "Sur" if np.random.random() < 0.5 else "Norte"
-        estado = random.choice(estados)
-        velocidad = np.random.uniform(0, 1) if estado == "En espera" else np.random.uniform(4, 16)
         barco = {
-            "nombre": "B" + str(i+1).zfill(4),
+            "nombre": f"BARCO_{i+1:04d}",
             "tipo": random.choice(tipos),
-            "direccion": direccion,
-            "lat": lat,
-            "lon": lon,
-            "velocidad": velocidad,
-            "estado": estado,
+            "direccion": "Sur" if np.random.random() < 0.5 else "Norte",
+            "lat": 9.0 + np.random.normal(0, 0.15),
+            "lon": -79.7 + np.random.normal(0, 0.15),
+            "velocidad": np.random.uniform(4, 16) if random.random() < 0.7 else np.random.uniform(0, 3),
+            "estado": random.choice(estados),
             "esclusa": random.choice(esclusas),
             "eta_horas": np.random.uniform(0.5, 8),
             "prioridad": random.choice(prioridades),
-            "eslora": round(np.random.uniform(80, 400), 0),
-            "calado": round(np.random.uniform(8, 18), 1),
-            "carga": round(np.random.uniform(100, 10000), 0)
+            "eslora": np.random.uniform(80, 400),
+            "calado": np.random.uniform(8, 18),
+            "carga": np.random.uniform(100, 10000),
+            "timestamp": datetime.now().isoformat()
         }
         barcos.append(barco)
-    return pd.DataFrame(barcos)
+    return barcos
+
+def simular_paso_barcos(df, sistema_seguimiento):
+    """Simula el paso de barcos por esclusas para demostración"""
+    if isinstance(df, pd.DataFrame):
+        barcos_aleatorios = df.sample(min(3, len(df)))
+    else:
+        barcos_aleatorios = df[:3]
+    
+    for _, barco in barcos_aleatorios.iterrows() if isinstance(df, pd.DataFrame) else enumerate(barcos_aleatorios):
+        if isinstance(barco, pd.Series):
+            barco_dict = barco.to_dict()
+        else:
+            barco_dict = barco
+        
+        esclusa = barco_dict.get("esclusa", random.choice(["Gatun", "Pedro Miguel", "Miraflores"]))
+        tiempo_espera = random.uniform(0.5, 3.0)
+        
+        sistema_seguimiento.registrar_paso_esclusa(
+            barco_dict,
+            esclusa,
+            tiempo_espera
+        )
+        
+        distancia = random.uniform(10, 70)
+        barco_dict["distancia_recorrida"] = distancia
+        
+        if distancia > 70:
+            sistema_seguimiento.registrar_salida_canal(barco_dict, distancia)
+    
+    return sistema_seguimiento
 
 # ==========================================
-# ANÁLISIS - COMPLETO
+# 18. GENERAR DATOS - COMPLETO
 # ==========================================
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
+def generar_datos():
+    """Genera datos combinando fuentes reales y simulación"""
+    
+    sistema_datos.actualizar_todo()
+    barcos_reales = sistema_datos.obtener_barcos_activos()
+    
+    if barcos_reales and len(barcos_reales) > 0:
+        logger.info(f"✅ Usando {len(barcos_reales)} barcos reales de AIS")
+        df = pd.DataFrame(barcos_reales)
+        return df
+    
+    logger.info("⚠️ Usando datos simulados (fallback)")
+    barcos_simulados = generar_barcos_simulados(40)
+    df = pd.DataFrame(barcos_simulados)
+    return df
+
+# ==========================================
+# 19. ANÁLISIS - COMPLETO
+# ==========================================
+
+@st.cache_data(ttl=60)
 def analizar(df):
     stats = {
         "total": len(df),
@@ -1116,7 +1717,7 @@ def analizar(df):
     return stats
 
 # ==========================================
-# FUNCIÓN PARA MAPA MEJORADO
+# 20. FUNCIÓN PARA MAPA MEJORADO
 # ==========================================
 
 def crear_mapa_mejorado(df):
@@ -1175,30 +1776,111 @@ def crear_mapa_mejorado(df):
     return fig
 
 # ==========================================
-# FUNCIÓN PARA SIMULAR PASO DE BARCOS
+# 21. FUNCIONES PARA EL DASHBOARD
 # ==========================================
 
-def simular_paso_barcos(df, sistema_seguimiento):
-    barcos_aleatorios = df.sample(min(5, len(df)))
+def mostrar_indicador_datos_reales():
+    """Muestra el estado de los datos reales en el sidebar"""
+    estado = sistema_datos.verificar_estado_conexiones()
     
-    for _, barco in barcos_aleatorios.iterrows():
-        esclusa = barco["esclusa"]
-        tiempo_espera = random.uniform(0.5, 3.0)
-        
-        sistema_seguimiento.registrar_paso_esclusa(
-            barco.to_dict(),
-            esclusa,
-            tiempo_espera
-        )
-        
-        distancia = random.uniform(10, 70)
-        barco_dict = barco.to_dict()
-        barco_dict["distancia_recorrida"] = distancia
-        
-        if distancia > 70:
-            sistema_seguimiento.registrar_salida_canal(barco_dict, distancia)
+    st.markdown("---")
+    st.markdown("#### 📡 Datos en Tiempo Real")
     
-    return sistema_seguimiento
+    if estado["ais"]:
+        st.success("🟢 AISStream.io")
+        st.caption(f"🚢 {len(sistema_datos.barcos)} barcos")
+    else:
+        st.warning("🟡 AISStream.io - Conectando...")
+    
+    if estado["clima"]:
+        st.success("🟢 OpenWeather")
+        if sistema_datos.clima:
+            st.caption(f"🌡️ {sistema_datos.clima.get('temperatura', 'N/A')}°C")
+    else:
+        st.warning("🟡 OpenWeather - Conectando...")
+    
+    if sistema_datos.ultima_actualizacion:
+        st.caption(f"🕐 {sistema_datos.ultima_actualizacion.strftime('%H:%M:%S')}")
+    
+    if st.button("🔄 Actualizar Datos", use_container_width=True):
+        with st.spinner("Actualizando datos..."):
+            sistema_datos.actualizar_todo()
+            st.rerun()
+
+def mostrar_indicador_actualizacion():
+    """Muestra el estado de actualización automática en el dashboard"""
+    
+    sistema = sistema_actualizacion
+    
+    st.markdown("---")
+    st.markdown("#### 🔄 Actualización Automática")
+    
+    if sistema.ultima_actualizacion:
+        ultima = sistema.ultima_actualizacion
+        tiempo_transcurrido = (datetime.now() - ultima).seconds
+        minutos = tiempo_transcurrido // 60
+        segundos = tiempo_transcurrido % 60
+        
+        st.caption(f"🕐 Última actualización: {ultima.strftime('%H:%M:%S')}")
+        st.caption(f"⏱️ Hace {minutos}m {segundos}s")
+        
+        progreso = min(tiempo_transcurrido / sistema.intervalo_segundos, 1.0)
+        st.progress(progreso)
+        
+        if sistema.proxima_actualizacion:
+            st.caption(f"⏳ Próxima actualización: {sistema.proxima_actualizacion.strftime('%H:%M:%S')}")
+    else:
+        st.warning("⏳ Esperando primera actualización...")
+    
+    if sistema.actualizando:
+        st.info("🔄 Actualizando datos...")
+    else:
+        st.success("✅ Sistema actualizado")
+    
+    if st.button("🔄 Forzar Actualización Ahora", use_container_width=True):
+        with st.spinner("Actualizando datos..."):
+            sistema_actualizacion.actualizar_datos()
+            st.rerun()
+
+def mostrar_clima_dashboard():
+    """Muestra las tarjetas de clima en el dashboard"""
+    clima = sistema_datos.obtener_clima_actual()
+    estado_mar = sistema_datos.obtener_estado_maritimo()
+    
+    if clima:
+        st.markdown("#### 🌤️ Clima y Mar - Datos Reales")
+        
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("🌡️ Temperatura", f"{clima.get('temperatura', 'N/A')}°C")
+        with col2:
+            st.metric("💨 Viento", f"{clima.get('viento', 'N/A')} nudos")
+        with col3:
+            st.metric("💧 Humedad", f"{clima.get('humedad', 'N/A')}%")
+        with col4:
+            st.metric("📊 Presión", f"{clima.get('presion', 'N/A')} hPa")
+        with col5:
+            st.metric("🌊 Oleaje", estado_mar.get("nivel_oleaje", "N/A") if estado_mar else "N/A")
+        
+        if estado_mar and estado_mar.get("recomendacion"):
+            rec = estado_mar["recomendacion"]
+            if "✅" in rec:
+                st.success(f"🚢 {rec}")
+            elif "⚠️" in rec:
+                st.warning(f"🚢 {rec}")
+            else:
+                st.error(f"🚢 {rec}")
+
+def ejecutar_actualizacion_automatica():
+    """Ejecuta la actualización automática si es necesario"""
+    sistema = sistema_actualizacion
+    
+    if not sistema.ultima_actualizacion:
+        sistema.actualizar_datos()
+    else:
+        tiempo_transcurrido = (datetime.now() - sistema.ultima_actualizacion).seconds
+        if tiempo_transcurrido >= sistema.intervalo_segundos:
+            sistema.actualizar_datos()
 
 # ==========================================
 # INICIALIZAR SISTEMAS
@@ -1215,12 +1897,28 @@ if "sistema_seguimiento" not in st.session_state:
 
 sistema_seguimiento = st.session_state.sistema_seguimiento
 
-if "df" not in st.session_state:
-    st.session_state.df = generar_datos()
-    st.session_state.stats = analizar(st.session_state.df)
+if "sistema_datos" not in st.session_state:
+    st.session_state.sistema_datos = SistemaDatosReales()
+    st.session_state.sistema_datos.actualizar_todo()
 
-df = st.session_state.df
-stats = st.session_state.stats
+sistema_datos = st.session_state.sistema_datos
+
+if "almacenamiento" not in st.session_state:
+    st.session_state.almacenamiento = AlmacenamientoPersistente()
+
+almacenamiento = st.session_state.almacenamiento
+
+if "sistema_actualizacion" not in st.session_state:
+    st.session_state.sistema_actualizacion = SistemaActualizacionAutomatica()
+
+sistema_actualizacion = st.session_state.sistema_actualizacion
+
+# Ejecutar actualización automática al cargar
+ejecutar_actualizacion_automatica()
+
+# Cargar datos (reales o simulados)
+df = generar_datos()
+stats = analizar(df)
 
 # ==========================================
 # SIDEBAR - COMPLETO
@@ -1248,7 +1946,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # KPIs del sidebar
     col1, col2 = st.columns(2)
     col1.metric("🚢 Barcos", stats["total"])
     col2.metric("⏱️ CWT", f"{stats['cwt']:.1f}h")
@@ -1262,7 +1959,10 @@ with st.sidebar:
     st.markdown("---")
     st.caption("🧠 Confianza: " + str(int(sistema.motor_decision.nivel_autonomia * 100)) + "%")
     
-    if st.button("🔄 Procesar Operación"):
+    mostrar_indicador_datos_reales()
+    mostrar_indicador_actualizacion()
+    
+    if st.button("🔄 Procesar Operación", use_container_width=True):
         with st.spinner("🧠 Procesando..."):
             datos = {
                 "barcos": stats["total"],
@@ -1283,7 +1983,6 @@ with st.sidebar:
 st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Sistema de Inteligencia Artificial para Optimización Operativa del Canal de Panamá</div>', unsafe_allow_html=True)
 
-# Mostrar última decisión si existe
 if "ultima_operacion" in st.session_state:
     resultado = st.session_state.ultima_operacion
     
@@ -1323,18 +2022,7 @@ col7.metric("⬇️ Sur", stats["sur"])
 
 st.markdown("---")
 
-# ==========================================
-# CLIMA Y MAR
-# ==========================================
-
-st.markdown("#### 🌤️ Clima y Mar")
-
-col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("🌡️ Temp", f"{stats['temp']:.1f}°C")
-col2.metric("💨 Viento", f"{stats['viento']:.1f} nudos")
-col3.metric("🌊 Marea", f"{stats['marea']:.1f}m")
-col4.metric("📏 Profundidad", f"{stats['profundidad']:.1f}m")
-col5.metric("🌊 Oleaje", f"{stats['oleaje']:.1f}m")
+mostrar_clima_dashboard()
 
 st.markdown("---")
 
@@ -1402,10 +2090,10 @@ for col, (nombre, datos) in zip([c1, c2, c3], stats["esclusas"].items()):
 st.markdown("---")
 
 # ==========================================
-# PESTAÑAS - 8 PESTAÑAS COMPLETAS
+# PESTAÑAS - 9 PESTAÑAS COMPLETAS
 # ==========================================
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "🗺️ Mapa",
     "📊 Análisis",
     "💬 Chat IA",
@@ -1413,7 +2101,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📈 Insights",
     "⚙️ Configuración IA",
     "📋 Datos Completos",
-    "🚢 Seguimiento"
+    "🚢 Seguimiento",
+    "📊 Histórico"
 ])
 
 # ==========================================
@@ -1902,6 +2591,142 @@ with tab8:
         st.info("No hay pasos registrados aún")
 
 # ==========================================
+# TAB 9: HISTÓRICO Y ANÁLISIS
+# ==========================================
+
+with tab9:
+    st.markdown("### 📊 Histórico y Análisis de Datos")
+    st.caption("Análisis de tendencias y datos históricos del Canal")
+    
+    stats_historicas = obtener_estadisticas_historicas()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("📚 Aprendizajes", stats_historicas["total_aprendizajes"])
+    with col2:
+        st.metric("📊 Decisiones", stats_historicas["total_decisiones"])
+    with col3:
+        st.metric("🔔 Alertas", stats_historicas["total_alertas"])
+    with col4:
+        st.metric("📝 Logs", stats_historicas["total_logs"])
+    
+    st.markdown("---")
+    
+    st.markdown("#### 📈 Tendencia de CWT (Últimas 24h)")
+    
+    tendencia = analizar_tendencia_historica()
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Tendencia", tendencia["tendencia"])
+    with col2:
+        st.metric("CWT Actual", f"{tendencia['cwt_actual']}h")
+    with col3:
+        st.metric("CWT Promedio", f"{tendencia['cwt_promedio']}h")
+    with col4:
+        st.metric("CWT Mínimo", f"{tendencia['cwt_minimo']}h")
+    with col5:
+        st.metric("CWT Máximo", f"{tendencia['cwt_maximo']}h")
+    
+    st.markdown("---")
+    
+    st.markdown("#### 📊 Evolución Histórica de CWT")
+    
+    historico = sistema_actualizacion.obtener_historico(limite=50)
+    
+    if historico:
+        fechas = []
+        cwt_values = []
+        
+        for registro in historico:
+            if "stats" in registro and "cwt" in registro["stats"]:
+                fechas.append(registro["timestamp"][:16])
+                cwt_values.append(registro["stats"]["cwt"])
+        
+        if fechas and cwt_values:
+            fig_historico = px.line(
+                x=fechas,
+                y=cwt_values,
+                title="Evolución del CWT en el Tiempo",
+                labels={"x": "Fecha/Hora", "y": "CWT (horas)"}
+            )
+            fig_historico.add_hline(y=15, line_dash="dash", line_color="orange", annotation_text="Advertencia")
+            fig_historico.add_hline(y=20, line_dash="dash", line_color="red", annotation_text="Crítico")
+            fig_historico.update_layout(height=350)
+            st.plotly_chart(fig_historico, use_container_width=True)
+        else:
+            st.info("📊 Sin datos suficientes para gráfico histórico")
+    else:
+        st.info("📊 No hay datos históricos disponibles aún")
+    
+    st.markdown("---")
+    
+    st.markdown("#### 📝 Últimos Aprendizajes de la IA")
+    
+    aprendizajes = almacenamiento.cargar("aprendizaje", limite=10)
+    if aprendizajes:
+        for item in reversed(aprendizajes[-5:]):
+            if isinstance(item, dict):
+                timestamp = item.get("timestamp", "")[:16]
+                texto = item.get("texto", "")[:100]
+                st.caption(f"📅 {timestamp} - {texto}...")
+                st.markdown("---")
+    else:
+        st.info("📝 No hay aprendizajes registrados aún")
+    
+    st.markdown("---")
+    
+    st.markdown("#### 🧠 Últimas Decisiones de la IA")
+    
+    decisiones = almacenamiento.cargar("decisiones", limite=10)
+    if decisiones:
+        for item in reversed(decisiones[-5:]):
+            if isinstance(item, dict):
+                timestamp = item.get("timestamp", "")[:16]
+                decision = item.get("decision", {})
+                if isinstance(decision, dict):
+                    opcion = decision.get("decision", {}).get("opcion", {})
+                    asignar = opcion.get("asignar", "N/A")
+                    prioridad = opcion.get("prioridad", "N/A")
+                    st.caption(f"🕐 {timestamp} - {asignar} (Prioridad: {prioridad})")
+                    st.markdown("---")
+    else:
+        st.info("🧠 No hay decisiones registradas aún")
+    
+    st.markdown("---")
+    
+    st.markdown("#### 📥 Exportar Datos Históricos")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📥 Exportar Histórico Completo (JSON)", use_container_width=True):
+            try:
+                if os.path.exists("datos_historicos/historico_barcos.json"):
+                    with open("datos_historicos/historico_barcos.json", "r") as f:
+                        data = json.load(f)
+                    json_str = json.dumps(data, default=str)
+                    st.download_button(
+                        label="📥 Descargar JSON",
+                        data=json_str,
+                        file_name=f"historico_completo_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                        mime="application/json"
+                    )
+            except Exception as e:
+                st.error(f"Error exportando: {e}")
+    
+    with col2:
+        if st.button("🧠 Exportar Aprendizajes (JSON)", use_container_width=True):
+            aprendizajes_json = almacenamiento.cargar("aprendizaje")
+            if aprendizajes_json:
+                json_str = json.dumps(aprendizajes_json, default=str)
+                st.download_button(
+                    label="📥 Descargar Aprendizajes",
+                    data=json_str,
+                    file_name=f"aprendizajes_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                    mime="application/json"
+                )
+
+# ==========================================
 # FOOTER
 # ==========================================
 
@@ -1914,3 +2739,33 @@ st.markdown("""
     <span style="color:#475569;">🚢 Barcos: {} | 📊 Datos completos | ⚙️ IA Cognitiva | 🚢 Seguimiento activo</span>
 </div>
 """.format(sistema.modo_operativo.upper(), stats["total"]), unsafe_allow_html=True)
+
+# ==========================================
+# VERIFICACIÓN DE CONEXIONES (MODO DEBUG)
+# ==========================================
+
+def verificar_conexiones():
+    """Verifica todas las conexiones de API (para depuración)"""
+    
+    print("\n🔍 Verificando conexiones...")
+    print("=" * 50)
+    
+    try:
+        barcos = sistema_datos.cliente_ais.obtener_barcos_canal()
+        print(f"✅ AISStream: {len(barcos)} barcos encontrados")
+    except Exception as e:
+        print(f"❌ AISStream: {e}")
+    
+    try:
+        clima = sistema_datos.cliente_clima.obtener_clima_actual()
+        if clima:
+            print(f"✅ OpenWeather: {clima.get('temperatura', 'N/A')}°C, {clima.get('descripcion', 'N/A')}")
+        else:
+            print("❌ OpenWeather: No se pudo obtener clima")
+    except Exception as e:
+        print(f"❌ OpenWeather: {e}")
+    
+    print("=" * 50)
+
+if st.session_state.get("debug_mode", False):
+    verificar_conexiones()
