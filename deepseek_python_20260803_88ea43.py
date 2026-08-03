@@ -1,12 +1,8 @@
 # ==========================================
-# DESCARGAR APP.PY PARA SUBIR A STREAMLIT CLOUD
+# CREAR APP.PY PARA STREAMLIT CLOUD (SIN COLAB)
 # ==========================================
 
-from google.colab import files
-
-# Guardar la versión final
-with open('app.py', 'w') as f:
-    f.write('''
+app_streamlit = '''
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -272,8 +268,13 @@ with tab6:
         st.download_button(label="Descargar Reporte (TXT)", data=reporte, file_name="reporte_canal.txt", mime="text/plain")
 
 st.markdown('<div class="footer">🌊 ANAYANSI - Canal Predictor | Sabiduria del mar | Panama</div>', unsafe_allow_html=True)
-''')
+'''
 
-# Descargar app.py
-files.download('app.py')
-print("✅ app.py descargado")
+# Guardar y descargar
+with open('app_streamlit.py', 'w') as f:
+    f.write(app_streamlit)
+
+from google.colab import files
+files.download('app_streamlit.py')
+
+print("✅ app_streamlit.py descargado")
