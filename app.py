@@ -276,7 +276,7 @@ class AnayansiIA:
         return "\n".join(lineas)
 
 # ==========================================
-# GENERAR DATOS - CON COLUMNAS COMPLETAS
+# GENERAR DATOS
 # ==========================================
 
 @st.cache_data(ttl=60)
@@ -363,7 +363,7 @@ def analizar(df):
     return stats
 
 # ==========================================
-# FUNCIÓN PARA MAPA MEJORADO
+# FUNCIÓN PARA MAPA MEJORADO - CORREGIDA
 # ==========================================
 
 def crear_mapa_mejorado(df):
@@ -395,7 +395,7 @@ def crear_mapa_mejorado(df):
         title="📍 Navegación en el Canal de Panamá"
     )
     
-    # Agregar esclusas como marcadores especiales
+    # Agregar esclusas como marcadores especiales usando add_trace con go.Scattermapbox
     esclusas_coords = {
         "Gatún": {"lat": 9.27, "lon": -79.92},
         "Pedro Miguel": {"lat": 9.015, "lon": -79.62},
@@ -403,14 +403,16 @@ def crear_mapa_mejorado(df):
     }
     
     for nombre, coords in esclusas_coords.items():
-        fig.add_scatter_mapbox(
-            lat=[coords["lat"]],
-            lon=[coords["lon"]],
-            mode="markers",
-            marker=dict(size=20, color="red", symbol="triangle-up"),
-            name="⚙️ " + nombre,
-            hoverinfo="text",
-            hovertext=["⚙️ Esclusa de " + nombre]
+        fig.add_trace(
+            go.Scattermapbox(
+                lat=[coords["lat"]],
+                lon=[coords["lon"]],
+                mode="markers",
+                marker=dict(size=20, color="red", symbol="triangle-up"),
+                name="⚙️ " + nombre,
+                hoverinfo="text",
+                hovertext=["⚙️ Esclusa de " + nombre]
+            )
         )
     
     fig.update_layout(
@@ -602,7 +604,7 @@ with tab3:
         st.rerun()
     
     if st.button("🗑️ Limpiar"):
-        st.session_state.chat = [{"rol": "anayansi", "msg": "🧠 Hola! Soy Anayansi. Puedo predecir congestión, razonar sobre datos y aprender. ¿Qué necesitas saber?"}]
+        st.session_state.chat = [{"rol": "anayansi", "msg": "🧠 Hola! Soy Anayansi. ¿Qué necesitas saber?"}]
         st.rerun()
 
 # TAB 4: APRENDIZAJE
@@ -664,18 +666,18 @@ with tab6:
     
     vel_prom = stats["velocidad_prom"]
     if vel_prom < 5:
-        st.info("🐢 **Velocidad baja:** " + str(round(vel_prom, 1)) + " nudos. Posible congestión o condiciones adversas.")
+        st.info("🐢 **Velocidad baja:** " + str(round(vel_prom, 1)) + " nudos.")
     elif vel_prom > 12:
-        st.success("🚀 **Velocidad alta:** " + str(round(vel_prom, 1)) + " nudos. Tráfico fluido.")
+        st.success("🚀 **Velocidad alta:** " + str(round(vel_prom, 1)) + " nudos.")
     
     espera_total = sum([d["espera"] for d in stats["esclusas"].values()])
     if espera_total > 15:
-        st.warning("⏳ **Alta congestión en esclusas:** " + str(espera_total) + " barcos en espera total.")
+        st.warning("⏳ **Alta congestión:** " + str(espera_total) + " barcos en espera.")
     elif espera_total > 8:
-        st.info("⏳ **Congestión moderada:** " + str(espera_total) + " barcos en espera total.")
+        st.info("⏳ **Congestión moderada:** " + str(espera_total) + " barcos en espera.")
     
     if stats.get("viento", 0) > 20 and stats["total"] > 40:
-        st.warning("🌪️ **Vientos fuertes + tráfico denso.** Se recomienda precaución.")
+        st.warning("🌪️ **Vientos fuertes + tráfico denso.** Precaución.")
     
     st.markdown("---")
     
@@ -686,7 +688,7 @@ with tab6:
     col3.metric("💬 Interacciones", len(anayansi.memoria_conversaciones))
     
     st.markdown("---")
-    st.caption("💡 Anayansi mejora con cada interacción. Mientras más converses, más inteligente se vuelve.")
+    st.caption("💡 Anayansi mejora con cada interacción.")
 
 # ==========================================
 # FOOTER
