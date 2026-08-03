@@ -111,7 +111,6 @@ class ClienteAIS:
         self._running = False
         self._lock = threading.Lock()
         self._thread = None
-        # Límites del Canal de Panamá
         self.lat_min = LAT_MIN
         self.lat_max = LAT_MAX
         self.lon_min = LON_MIN
@@ -168,7 +167,6 @@ class ClienteAIS:
                                 lat = pos.get('Latitude', 0)
                                 lon = pos.get('Longitude', 0)
                                 
-                                # FILTRAR COORDENADAS INVÁLIDAS
                                 if lat != 0 and lon != 0:
                                     if self.lat_min <= lat <= self.lat_max and self.lon_min <= lon <= self.lon_max:
                                         with self._lock:
@@ -208,7 +206,6 @@ class ClienteAIS:
             return self.barcos_activos
     
     def procesar_barcos_formateados(self):
-        """Procesa y formatea los barcos - CON FILTRO DE COORDENADAS"""
         barcos = self.obtener_barcos_canal()
         if not barcos:
             return []
@@ -219,7 +216,6 @@ class ClienteAIS:
             lon = barco.get('lon', 0)
             speed = barco.get('speed', 0)
             
-            # FILTRO: solo coordenadas válidas
             if lat == 0 or lon == 0:
                 continue
             if not (self.lat_min <= lat <= self.lat_max and self.lon_min <= lon <= self.lon_max):
@@ -995,10 +991,18 @@ def analizar(df):
     return stats
 
 # ==========================================
-# 9. FUNCIÓN PARA MAPA MEJORADO
+# 9. FUNCIONES PARA MAPA MEJORADO (2D Y 3D)
 # ==========================================
 
-def crear_mapa_mejorado(df):
+def crear_mapa_2d(df, estilo):
+    """Crea mapa 2D con diferentes estilos"""
+    estilos_map = {
+        "🌍 Satélite": "satellite-streets",
+        "🏙️ Calles": "carto-positron",
+        "🌄 Relieve": "outdoors",
+        "🌃 Nocturno": "dark"
+    }
+    
     fig = px.scatter_mapbox(
         df,
         lat="lat",
@@ -1013,24 +1017,22 @@ def crear_mapa_mejorado(df):
             "posicion": True,
             "progreso": ":.1f",
             "eta_horas": ":.1f",
-            "prioridad": True,
-            "eslora": True,
-            "calado": True,
-            "carga": True
+            "prioridad": True
         },
         color="prioridad",
         color_discrete_map={"Alta": "#ef4444", "Media": "#f59e0b", "Baja": "#10b981"},
         size="velocidad",
-        size_max=16,
-        zoom=9,
-        height=500,
+        size_max=18,
+        zoom=9.5,
+        height=550,
         title="📍 Navegación en el Canal de Panamá"
     )
     
+    # Agregar esclusas
     esclusas_coords = {
-        "Gatún": {"lat": 9.27, "lon": -79.92},
-        "Pedro Miguel": {"lat": 9.015, "lon": -79.62},
-        "Miraflores": {"lat": 8.995, "lon": -79.585}
+        "Gatún": {"lat": 9.27, "lon": -79.92, "color": "#ef4444"},
+        "Pedro Miguel": {"lat": 9.015, "lon": -79.62, "color": "#f59e0b"},
+        "Miraflores": {"lat": 8.995, "lon": -79.585, "color": "#10b981"}
     }
     
     for nombre, coords in esclusas_coords.items():
@@ -1038,19 +1040,87 @@ def crear_mapa_mejorado(df):
             go.Scattermapbox(
                 lat=[coords["lat"]],
                 lon=[coords["lon"]],
-                mode="markers",
-                marker=dict(size=20, color="red", symbol="triangle-up"),
-                name="⚙️ " + nombre,
+                mode="markers+text",
+                marker=dict(size=25, color=coords["color"], symbol="triangle-up", line=dict(width=2, color="white")),
+                text=[f"⚙️ {nombre}"],
+                textposition="bottom center",
+                textfont=dict(color="white", size=10),
+                name=f"⚙️ {nombre}",
                 hoverinfo="text",
-                hovertext=["⚙️ Esclusa de " + nombre]
+                hovertext=[f"<b>⚙️ Esclusa de {nombre}</b>"]
             )
         )
     
     fig.update_layout(
-        mapbox_style="carto-positron",
-        mapbox_center={"lat": 9.15, "lon": -79.75},
-        margin={"r": 0, "t": 30, "l": 0, "b": 0},
+        mapbox=dict(
+            style=estilos_map.get(estilo, "satellite-streets"),
+            center=dict(lat=9.15, lon=-79.75),
+            zoom=9.5
+        ),
+        margin=dict(r=0, t=30, l=0, b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
+    return fig
+
+def crear_mapa_3d(df):
+    """Crea mapa 3D con relieve"""
+    fig = go.Figure()
+    
+    # Barcos en 3D
+    fig.add_trace(go.Scatter3d(
+        x=df["lon"],
+        y=df["lat"],
+        z=df["velocidad"] * 0.3,
+        mode="markers+text",
+        marker=dict(
+            size=df["velocidad"] * 1.5,
+            color=df["prioridad"].map({"Alta": "#ef4444", "Media": "#f59e0b", "Baja": "#10b981"}),
+            symbol="circle",
+            opacity=0.8
+        ),
+        text=df["nombre"],
+        textposition="top center",
+        hoverinfo="text",
+        hovertext=[
+            f"<b>{row['nombre']}</b><br>"
+            f"Velocidad: {row['velocidad']:.1f} nudos<br>"
+            f"Progreso: {row['progreso']:.0f}%"
+            for _, row in df.iterrows()
+        ],
+        name="Barcos"
+    ))
+    
+    # Esclusas en 3D
+    esclusas_coords = {
+        "Gatún": {"lat": 9.27, "lon": -79.92},
+        "Pedro Miguel": {"lat": 9.015, "lon": -79.62},
+        "Miraflores": {"lat": 8.995, "lon": -79.585}
+    }
+    
+    for nombre, coords in esclusas_coords.items():
+        fig.add_trace(go.Scatter3d(
+            x=[coords["lon"]],
+            y=[coords["lat"]],
+            z=[2],
+            mode="markers+text",
+            marker=dict(size=10, color="red", symbol="diamond"),
+            text=[f"⚙️ {nombre}"],
+            textposition="top center",
+            name=f"⚙️ {nombre}"
+        ))
+    
+    fig.update_layout(
+        title="🌍 Mapa 3D del Canal",
+        scene=dict(
+            xaxis=dict(title="Longitud", range=[-80.0, -79.5]),
+            yaxis=dict(title="Latitud", range=[8.85, 9.40]),
+            zaxis=dict(title="Velocidad", range=[0, 8]),
+            camera=dict(eye=dict(x=0.5, y=0.5, z=1.8))
+        ),
+        height=550,
+        margin=dict(r=0, l=0, b=0, t=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02)
     )
     
     return fig
@@ -1363,18 +1433,43 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
 ])
 
 # ==========================================
-# TAB 1: MAPA
+# TAB 1: MAPA MEJORADO (2D Y 3D)
 # ==========================================
 
 with tab1:
-    st.markdown("### 🗺️ Mapa de Navegación")
+    st.markdown("### 🗺️ Mapa de Navegación Interactivo")
+    
+    # Opciones de visualización
+    col1, col2 = st.columns(2)
+    with col1:
+        tipo_mapa = st.radio(
+            "Tipo de Mapa",
+            ["2D Interactivo", "3D con Relieve"],
+            horizontal=True,
+            key="tipo_mapa"
+        )
+    with col2:
+        if tipo_mapa == "2D Interactivo":
+            estilo_mapa = st.selectbox(
+                "Estilo",
+                ["🌍 Satélite", "🏙️ Calles", "🌄 Relieve", "🌃 Nocturno"],
+                index=0,
+                key="estilo_mapa_select"
+            )
+    
     st.caption("🟢 Barcos con prioridad baja | 🟡 Media | 🔴 Alta | 🔺 Esclusas")
     
-    fig = crear_mapa_mejorado(df)
-    st.plotly_chart(fig, use_container_width=True)
+    # Crear mapa según tipo seleccionado
+    if tipo_mapa == "2D Interactivo":
+        fig = crear_mapa_2d(df, estilo_mapa if 'estilo_mapa' in locals() else "🌍 Satélite")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        fig_3d = crear_mapa_3d(df)
+        st.plotly_chart(fig_3d, use_container_width=True)
     
     st.markdown("---")
-    st.markdown("#### 📊 Resumen del Mapa")
+    
+    # Resumen del mapa
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📍 Barcos en el mapa", stats["total"])
