@@ -76,6 +76,8 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 8px 16px; }
     .stTabs [aria-selected="true"] { background: #00b4d8; color: white; border-radius: 6px; }
     .esclusa-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
+    .real-time-indicator { color: #10b981; font-weight: 600; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 </style>
 """, unsafe_allow_html=True)
 
@@ -204,7 +206,6 @@ class ClienteAIS:
             lon = barco.get('lon', 0)
             speed = barco.get('speed', 0)
             
-            # Determinar dirección según latitud
             if lat > 9.15:
                 direccion = "Sur"
             elif lat < 9.05:
@@ -212,7 +213,6 @@ class ClienteAIS:
             else:
                 direccion = "Navegando"
             
-            # Determinar esclusa más cercana
             esclusa = self._determinar_esclusa(lat, lon)
             
             barco_formateado = {
@@ -349,13 +349,9 @@ class SistemaDatosReales:
     def actualizar_todo(self):
         """Actualiza todas las fuentes de datos"""
         try:
-            # Barcos desde AISStream WebSocket
             self.barcos = self.cliente_ais.procesar_barcos_formateados()
-            
-            # Clima desde OpenWeather
             self.clima = self.cliente_clima.obtener_clima_actual()
             self.estado_maritimo = self.cliente_clima.obtener_estado_maritimo()
-            
             self.ultima_actualizacion = datetime.now()
             
             if self.barcos:
@@ -380,7 +376,7 @@ class SistemaDatosReales:
         return estado
 
 # ==========================================
-# 4. SISTEMA DE SEGUIMIENTO
+# 4. SISTEMA DE SEGUIMIENTO DE BARCOS
 # ==========================================
 
 class SistemaSeguimientoBarcos:
@@ -501,7 +497,149 @@ class SistemaSeguimientoBarcos:
         return df
 
 # ==========================================
-# 5. FUNCIONES PARA GRÁFICOS
+# 5. SISTEMA DE TIEMPO REAL
+# ==========================================
+
+class SistemaTiempoReal:
+    """Sistema de actualización automática en tiempo real"""
+    
+    def __init__(self):
+        self.ultima_actualizacion = None
+        self.proxima_actualizacion = None
+        self.intervalo_segundos = 15
+        self.actualizando = False
+        self.historial_actualizaciones = []
+        self.errores_actualizacion = []
+        self.ejecutando = False
+        self.thread_actualizacion = None
+        
+    def iniciar(self):
+        """Inicia el sistema de actualización en tiempo real"""
+        if self.ejecutando:
+            return
+        
+        self.ejecutando = True
+        self.thread_actualizacion = threading.Thread(target=self._loop_actualizacion, daemon=True)
+        self.thread_actualizacion.start()
+        logger.info("🔄 Sistema de tiempo real iniciado (15s)")
+        
+    def _loop_actualizacion(self):
+        """Loop principal de actualización"""
+        while self.ejecutando:
+            try:
+                self.actualizar_todo()
+                time.sleep(self.intervalo_segundos)
+            except Exception as e:
+                logger.error(f"❌ Error en loop de actualización: {e}")
+                time.sleep(5)
+    
+    def actualizar_todo(self):
+        """Actualiza todos los datos del sistema"""
+        if self.actualizando:
+            return
+        
+        self.actualizando = True
+        inicio = datetime.now()
+        
+        try:
+            sistema_datos.actualizar_todo()
+            
+            df_actual = generar_datos()
+            stats_actuales = analizar(df_actual)
+            
+            st.session_state.df = df_actual
+            st.session_state.stats = stats_actuales
+            st.session_state.ultima_actualizacion = datetime.now()
+            
+            if 'anayansi' in st.session_state:
+                nuevos_aprendizajes = st.session_state.anayansi.aprender_automaticamente(df_actual, stats_actuales)
+                st.session_state.nuevos_aprendizajes = nuevos_aprendizajes
+            
+            if len(df_actual) > 0 and 'sistema_seguimiento' in st.session_state:
+                barcos_muestra = df_actual.sample(min(3, len(df_actual)))
+                for _, barco in barcos_muestra.iterrows():
+                    esclusa = barco.get('esclusa', random.choice(['Gatun', 'Pedro Miguel', 'Miraflores']))
+                    st.session_state.sistema_seguimiento.registrar_paso_esclusa(
+                        barco.to_dict(),
+                        esclusa,
+                        random.uniform(0.5, 2.0)
+                    )
+            
+            self._guardar_historico(df_actual, stats_actuales)
+            
+            fin = datetime.now()
+            duracion = (fin - inicio).total_seconds()
+            
+            registro = {
+                "timestamp": fin.isoformat(),
+                "duracion": round(duracion, 2),
+                "barcos": len(df_actual),
+                "cwt": stats_actuales["cwt"],
+                "exito": True
+            }
+            self.historial_actualizaciones.append(registro)
+            
+            if len(self.historial_actualizaciones) > 1000:
+                self.historial_actualizaciones = self.historial_actualizaciones[-1000:]
+            
+            self.ultima_actualizacion = fin
+            self.proxima_actualizacion = fin + timedelta(seconds=self.intervalo_segundos)
+            
+            self.actualizando = False
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error en actualización: {e}")
+            self.errores_actualizacion.append({
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e)
+            })
+            self.actualizando = False
+            return False
+    
+    def _guardar_historico(self, df, stats):
+        """Guarda datos históricos"""
+        try:
+            df.to_csv("datos_historicos/barcos_tiempo_real.csv", index=False)
+            
+            with open("datos_historicos/stats_tiempo_real.json", "w") as f:
+                json.dump(stats, f, default=str)
+            
+            historico = []
+            if os.path.exists("datos_historicos/historico_completo.json"):
+                with open("datos_historicos/historico_completo.json", "r") as f:
+                    historico = json.load(f)
+            
+            registro = {
+                "timestamp": datetime.now().isoformat(),
+                "barcos": len(df),
+                "stats": stats
+            }
+            historico.append(registro)
+            
+            if len(historico) > 500:
+                historico = historico[-500:]
+            
+            with open("datos_historicos/historico_completo.json", "w") as f:
+                json.dump(historico, f, default=str)
+                
+        except Exception as e:
+            logger.error(f"Error guardando histórico: {e}")
+    
+    def obtener_tendencia(self):
+        """Obtiene tendencia de los últimos datos"""
+        try:
+            if os.path.exists("datos_historicos/historico_completo.json"):
+                with open("datos_historicos/historico_completo.json", "r") as f:
+                    historico = json.load(f)
+                    if historico:
+                        return historico[-50:]
+        except:
+            pass
+        return []
+
+# ==========================================
+# 6. FUNCIONES PARA GRÁFICOS
 # ==========================================
 
 def crear_grafico_tiempos_esclusas(sistema_seguimiento):
@@ -596,8 +734,62 @@ def crear_grafico_progreso_barcos(sistema_seguimiento):
             return fig
     return None
 
+def crear_grafico_tiempo_real():
+    """Crea un gráfico de evolución en tiempo real"""
+    historico = sistema_tiempo_real.obtener_tendencia()
+    
+    if historico and len(historico) > 2:
+        fechas = []
+        cwt_values = []
+        barcos_values = []
+        
+        for registro in historico:
+            if "timestamp" in registro and "stats" in registro:
+                fechas.append(registro["timestamp"][11:19])
+                cwt_values.append(registro["stats"].get("cwt", 0))
+                barcos_values.append(registro["stats"].get("total", 0))
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=fechas[-30:],
+            y=cwt_values[-30:],
+            mode='lines+markers',
+            name='CWT',
+            line=dict(color='#00b4d8', width=2),
+            marker=dict(size=6)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=fechas[-30:],
+            y=barcos_values[-30:],
+            mode='lines+markers',
+            name='Barcos',
+            line=dict(color='#f59e0b', width=2),
+            marker=dict(size=6),
+            yaxis='y2'
+        ))
+        
+        fig.update_layout(
+            title="📊 Evolución en Tiempo Real",
+            xaxis_title="Hora",
+            yaxis_title="CWT (horas)",
+            yaxis2=dict(
+                title="Barcos",
+                overlaying='y',
+                side='right'
+            ),
+            height=300,
+            template="plotly_dark",
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        
+        return fig
+    return None
+
 # ==========================================
-# 6. GENERAR DATOS - COMPLETO
+# 7. GENERAR DATOS
 # ==========================================
 
 @st.cache_data(ttl=60)
@@ -612,7 +804,6 @@ def generar_datos():
         df = pd.DataFrame(barcos_reales)
         return df
     
-    # Fallback a datos simulados si no hay barcos reales
     logger.info("⚠️ Usando datos simulados (fallback)")
     barcos_simulados = generar_barcos_simulados(40)
     df = pd.DataFrame(barcos_simulados)
@@ -648,7 +839,7 @@ def generar_barcos_simulados(n):
     return barcos
 
 # ==========================================
-# 7. ANÁLISIS
+# 8. ANÁLISIS
 # ==========================================
 
 @st.cache_data(ttl=60)
@@ -689,7 +880,7 @@ def analizar(df):
     return stats
 
 # ==========================================
-# 8. FUNCIÓN PARA MAPA MEJORADO
+# 9. FUNCIÓN PARA MAPA MEJORADO
 # ==========================================
 
 def crear_mapa_mejorado(df):
@@ -748,7 +939,7 @@ def crear_mapa_mejorado(df):
     return fig
 
 # ==========================================
-# 9. FUNCIONES PARA EL DASHBOARD
+# 10. FUNCIONES PARA EL DASHBOARD
 # ==========================================
 
 def mostrar_indicador_datos_reales():
@@ -777,6 +968,37 @@ def mostrar_indicador_datos_reales():
     if st.button("🔄 Actualizar Datos", use_container_width=True):
         with st.spinner("Actualizando datos reales..."):
             sistema_datos.actualizar_todo()
+            st.rerun()
+
+def mostrar_indicador_tiempo_real():
+    """Muestra el estado de actualización en tiempo real"""
+    sistema = st.session_state.sistema_tiempo_real
+    
+    st.markdown("---")
+    st.markdown("#### ⚡ Tiempo Real")
+    
+    if sistema.ultima_actualizacion:
+        ultima = sistema.ultima_actualizacion
+        tiempo_transcurrido = (datetime.now() - ultima).seconds
+        st.caption(f"🕐 Última actualización: {ultima.strftime('%H:%M:%S')}")
+        st.caption(f"⏱️ Hace {tiempo_transcurrido}s")
+        
+        progreso = min(tiempo_transcurrido / sistema.intervalo_segundos, 1.0)
+        st.progress(progreso)
+        
+        if sistema.proxima_actualizacion:
+            st.caption(f"⏳ Próxima: {sistema.proxima_actualizacion.strftime('%H:%M:%S')}")
+    else:
+        st.warning("⏳ Iniciando...")
+    
+    if sistema.actualizando:
+        st.info("🔄 Actualizando...")
+    else:
+        st.success("✅ Activo")
+    
+    if st.button("🔄 Actualizar Ahora", use_container_width=True):
+        with st.spinner("Actualizando..."):
+            sistema.actualizar_todo()
             st.rerun()
 
 def mostrar_clima_dashboard():
@@ -808,8 +1030,16 @@ def mostrar_clima_dashboard():
             else:
                 st.error(f"🚢 {rec}")
 
+def mostrar_grafico_tiempo_real():
+    """Muestra el gráfico de evolución en tiempo real"""
+    fig = crear_grafico_tiempo_real()
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("⏳ Recopilando datos para gráfico en tiempo real...")
+
 # ==========================================
-# 10. SIMULAR PASO DE BARCOS
+# 11. SIMULAR PASO DE BARCOS
 # ==========================================
 
 def simular_paso_barcos(df, sistema_seguimiento):
@@ -843,7 +1073,7 @@ def simular_paso_barcos(df, sistema_seguimiento):
     return sistema_seguimiento
 
 # ==========================================
-# 11. INICIALIZAR SISTEMAS
+# 12. INICIALIZAR SISTEMAS
 # ==========================================
 
 if "sistema_datos" not in st.session_state:
@@ -857,9 +1087,22 @@ if "sistema_seguimiento" not in st.session_state:
 
 sistema_seguimiento = st.session_state.sistema_seguimiento
 
-# Cargar datos (reales o simulados)
-df = generar_datos()
-stats = analizar(df)
+if "sistema_tiempo_real" not in st.session_state:
+    st.session_state.sistema_tiempo_real = SistemaTiempoReal()
+    st.session_state.sistema_tiempo_real.iniciar()
+
+sistema_tiempo_real = st.session_state.sistema_tiempo_real
+
+# Cargar datos iniciales
+if "df" not in st.session_state or "stats" not in st.session_state:
+    df = generar_datos()
+    stats = analizar(df)
+    st.session_state.df = df
+    st.session_state.stats = stats
+    st.session_state.ultima_actualizacion = datetime.now()
+else:
+    df = st.session_state.df
+    stats = st.session_state.stats
 
 # ==========================================
 # SIDEBAR
@@ -879,9 +1122,8 @@ with st.sidebar:
     col1.metric("Norte", stats["norte"])
     col2.metric("Sur", stats["sur"])
     
-    st.markdown("---")
-    
-    # Indicador de datos reales
+    # Indicadores de tiempo real
+    mostrar_indicador_tiempo_real()
     mostrar_indicador_datos_reales()
     
     st.markdown("---")
@@ -902,6 +1144,10 @@ with st.sidebar:
 
 st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Sistema de Inteligencia Artificial para Optimización Operativa del Canal de Panamá</div>', unsafe_allow_html=True)
+
+# Mostrar última actualización
+if 'ultima_actualizacion' in st.session_state:
+    st.caption(f"🔄 Datos actualizados en tiempo real - Última: {st.session_state.ultima_actualizacion.strftime('%H:%M:%S')}")
 
 st.markdown("---")
 
@@ -925,6 +1171,15 @@ st.markdown("---")
 # ==========================================
 
 mostrar_clima_dashboard()
+
+st.markdown("---")
+
+# ==========================================
+# GRÁFICO EN TIEMPO REAL
+# ==========================================
+
+st.markdown("### 📊 Evolución en Tiempo Real")
+mostrar_grafico_tiempo_real()
 
 st.markdown("---")
 
@@ -1192,6 +1447,13 @@ with tab6:
         st.success("✅ OpenWeather: Conectado")
     else:
         st.warning("🟡 OpenWeather: Conectando...")
+    
+    st.markdown("---")
+    st.markdown("#### ⏱️ Intervalo de Actualización")
+    intervalo = st.selectbox("Intervalo (segundos)", [5, 10, 15, 30, 60], index=2)
+    if intervalo != sistema_tiempo_real.intervalo_segundos:
+        sistema_tiempo_real.intervalo_segundos = intervalo
+        st.success(f"✅ Intervalo actualizado a {intervalo}s")
 
 # ==========================================
 # TAB 7: DATOS COMPLETOS
@@ -1330,8 +1592,10 @@ with tab8:
 
 st.markdown("""
 <div class="footer">
-    🧠 ANAYANSI - IA Cognitiva v3.0 | Datos en tiempo real desde AISStream WebSocket
+    🧠 ANAYANSI - IA Cognitiva | Datos en tiempo real cada 15s
     <br>
-    <span style="color:#475569;">🚢 Barcos: {} | 📡 AISStream + OpenWeather</span>
+    <span style="color:#475569;">🚢 Barcos: {} | 📡 AISStream WebSocket + OpenWeather</span>
+    <br>
+    <span style="color:#475569;">🔄 Última actualización: {}</span>
 </div>
-""".format(stats["total"]), unsafe_allow_html=True)
+""".format(stats["total"], datetime.now().strftime("%H:%M:%S")), unsafe_allow_html=True)
