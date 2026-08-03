@@ -10,591 +10,981 @@ import json
 import logging
 from pathlib import Path
 from collections import defaultdict
-import base64
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional, Tuple
+import hashlib
 
 # ==========================================
-# CONFIGURACIÓN DE LOGGING
+# CONFIGURACIÓN
 # ==========================================
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('anayansi.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.FileHandler('anayansi.log'), logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
 st.set_page_config(
-    page_title="🧠 ANAYANSI - IA Proactiva",
+    page_title="🧠 ANAYANSI - IA Cognitiva",
     page_icon="🧠",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # ==========================================
-# ESTILOS CON TEMA OSCURO/CLARO
+# 1. MOTOR DE DECISIÓN AUTÓNOMA
 # ==========================================
 
-def aplicar_tema(tema="oscuro"):
-    if tema == "oscuro":
-        st.markdown("""
-        <style>
-            .main-header { font-size: 2rem; font-weight: 900; color: #00b4d8; }
-            .sub-header { font-size: 0.9rem; color: #94a3b8; margin-top: -5px; }
-            .metric-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
-            .metric-value { font-size: 1.6rem; font-weight: 700; color: white; }
-            .metric-label { font-size: 0.65rem; color: #94a3b8; text-transform: uppercase; }
-            .chat-ai { background: rgba(0,150,255,0.1); border-left: 3px solid #00b4d8; padding: 10px; border-radius: 8px; margin: 6px 0; color: #e2e8f0; font-size: 0.9rem; }
-            .chat-user { background: rgba(15,23,42,0.8); border-left: 3px solid #64748b; padding: 10px; border-radius: 8px; margin: 6px 0; color: #94a3b8; font-size: 0.9rem; }
-            .insight-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; margin: 5px 0; }
-            .alert-card { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; border-radius: 8px; padding: 10px; margin: 5px 0; }
-            .warning-card { background: rgba(245,158,11,0.1); border: 1px solid #f59e0b; border-radius: 8px; padding: 10px; margin: 5px 0; }
-            .info-card { background: rgba(0,150,255,0.1); border: 1px solid #00b4d8; border-radius: 8px; padding: 10px; margin: 5px 0; }
-            .footer { text-align: center; color: #475569; padding: 10px 0; border-top: 1px solid #1e293b; margin-top: 15px; font-size: 0.65rem; }
-            div.stButton > button { background: #00b4d8; color: white; border-radius: 8px; border: none; padding: 0.3rem 1rem; font-size: 0.8rem; }
-            .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 6px 12px; }
-            .stTabs [aria-selected="true"] { background: #00b4d8; color: white; border-radius: 6px; }
-            .esclusa-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; }
-        </style>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <style>
-            .main-header { font-size: 2rem; font-weight: 900; color: #0077b6; }
-            .sub-header { font-size: 0.9rem; color: #475569; margin-top: -5px; }
-            .metric-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; }
-            .metric-value { font-size: 1.6rem; font-weight: 700; color: #0f172a; }
-            .metric-label { font-size: 0.65rem; color: #475569; text-transform: uppercase; }
-            .chat-ai { background: rgba(0,150,255,0.05); border-left: 3px solid #00b4d8; padding: 10px; border-radius: 8px; margin: 6px 0; color: #0f172a; font-size: 0.9rem; }
-            .chat-user { background: #f1f5f9; border-left: 3px solid #94a3b8; padding: 10px; border-radius: 8px; margin: 6px 0; color: #475569; font-size: 0.9rem; }
-            .insight-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; margin: 5px 0; }
-            .footer { text-align: center; color: #94a3b8; padding: 10px 0; border-top: 1px solid #e2e8f0; margin-top: 15px; font-size: 0.65rem; }
-            .esclusa-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; }
-        </style>
-        """, unsafe_allow_html=True)
+@dataclass
+class DecisionContext:
+    """Contexto completo para toma de decisiones"""
+    timestamp: datetime
+    barcos_activos: int
+    esclusas_disponibles: List[str]
+    condiciones_climaticas: Dict[str, float]
+    demanda_actual: float
+    recursos_disponibles: Dict[str, int]
+    historico_reciente: List[Dict]
+    prioridades: Dict[str, float]
 
-# ==========================================
-# SISTEMA DE USUARIOS Y ROLES
-# ==========================================
-
-class Usuario:
-    def __init__(self, nombre, rol="observador"):
-        self.nombre = nombre
-        self.rol = rol
-        self.permisos = self._asignar_permisos()
+class MotorDecisionAutonoma:
+    """Cerebro de ANAYANSI - Toma decisiones operativas en tiempo real"""
     
-    def _asignar_permisos(self):
-        if self.rol == "admin":
-            return ["ver_todo", "editar", "eliminar", "configurar", "exportar"]
-        elif self.rol == "operador":
-            return ["ver_todo", "editar", "exportar"]
-        else:
-            return ["ver_todo"]
-    
-    def tiene_permiso(self, permiso):
-        return permiso in self.permisos
-
-# ==========================================
-# SISTEMA ANAYANSI - IA PROACTIVA COMPLETA
-# ==========================================
-
-class AnayansiIA:
     def __init__(self):
-        self.aprendizaje = []
-        self.logs = []
-        self.historial_barcos = []
-        self.memoria_conversaciones = []
-        self.patrones = defaultdict(list)
-        self.predicciones = []
-        self.razonamiento = []
-        self.confianza = 0.85
-        self.alertas_activas = []
-        self.recomendaciones = []
-        self.ultimo_analisis = None
-        self.historial_alertas = []
-        self.precision_historica = []
-        self.tendencias = {}
-        self.usuario_actual = None
-    
-    # ==========================================
-    # PERSISTENCIA DE DATOS
-    # ==========================================
-    
-    def guardar_estado(self):
-        try:
-            data = {
-                "aprendizaje": self.aprendizaje,
-                "logs": self.logs,
-                "historial_barcos": self.historial_barcos[-100:],
-                "memoria_conversaciones": self.memoria_conversaciones,
-                "confianza": self.confianza,
-                "historial_alertas": self.historial_alertas[-50:],
-                "tendencias": self.tendencias
-            }
-            with open("anayansi_estado.json", "w") as f:
-                json.dump(data, f, default=str)
-            logger.info("Estado guardado correctamente")
-        except Exception as e:
-            logger.error(f"Error guardando estado: {e}")
-    
-    def cargar_estado(self):
-        try:
-            if Path("anayansi_estado.json").exists():
-                with open("anayansi_estado.json", "r") as f:
-                    data = json.load(f)
-                    self.aprendizaje = data.get("aprendizaje", [])
-                    self.logs = data.get("logs", [])
-                    self.historial_barcos = data.get("historial_barcos", [])
-                    self.memoria_conversaciones = data.get("memoria_conversaciones", [])
-                    self.confianza = data.get("confianza", 0.85)
-                    self.historial_alertas = data.get("historial_alertas", [])
-                    self.tendencias = data.get("tendencias", {})
-                logger.info("Estado cargado correctamente")
-        except Exception as e:
-            logger.error(f"Error cargando estado: {e}")
-    
-    # ==========================================
-    # MÉTRICAS DE RENDIMIENTO
-    # ==========================================
-    
-    def evaluar_precision(self, predicciones, reales):
-        """Evalúa la precisión de las predicciones de la IA"""
-        if predicciones and reales and len(predicciones) == len(reales):
-            try:
-                aciertos = sum(1 for p, r in zip(predicciones, reales) if abs(p - r) < 0.5)
-                precision = aciertos / len(predicciones)
-                self.confianza = 0.7 * self.confianza + 0.3 * precision
-                self.precision_historica.append(precision)
-                return precision
-            except:
-                return 0
-        return 0
-    
-    def calcular_tendencia(self):
-        """Calcula la tendencia del tráfico basado en historial"""
-        if len(self.historial_barcos) > 20:
-            velocidades = [b["velocidad"] for b in self.historial_barcos[-20:]]
-            if len(velocidades) > 2:
-                try:
-                    x = range(len(velocidades))
-                    n = len(x)
-                    sum_x = sum(x)
-                    sum_y = sum(velocidades)
-                    sum_xy = sum(x[i] * velocidades[i] for i in range(n))
-                    sum_xx = sum(x[i] * x[i] for i in range(n))
-                    pendiente = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x)
-                    return pendiente
-                except:
-                    return 0
-        return 0
-    
-    def analizar_tendencia(self):
-        """Analiza la tendencia y genera un mensaje"""
-        tendencia = self.calcular_tendencia()
-        if tendencia > 0.2:
-            return "📈 Tendencia al alza: Se espera más tráfico en las próximas horas"
-        elif tendencia < -0.2:
-            return "📉 Tendencia a la baja: El tráfico disminuirá gradualmente"
-        elif abs(tendencia) < 0.1:
-            return "📊 Tráfico estable: Se mantienen las condiciones actuales"
-        return "📊 Datos insuficientes para determinar tendencia"
-    
-    # ==========================================
-    # MÉTODOS PROACTIVOS
-    # ==========================================
-    
-    def registrar_alerta(self, alerta):
-        """Registra una alerta en el historial"""
-        alerta_con_timestamp = {
-            "timestamp": datetime.now().isoformat(),
-            **alerta
+        self.nivel_autonomia = 0.85
+        self.historial_decisiones = []
+        self.reglas_aprendidas = []
+        self.pesos_decision = {
+            "seguridad": 0.35,
+            "eficiencia": 0.30,
+            "costo": 0.20,
+            "sostenibilidad": 0.15
         }
-        self.historial_alertas.append(alerta_con_timestamp)
-        if len(self.historial_alertas) > 50:
-            self.historial_alertas = self.historial_alertas[-50:]
+        self.umbrales_criticos = {
+            "congestion_maxima": 0.85,
+            "tiempo_espera_max": 120,
+            "velocidad_minima": 3,
+            "distancia_seguridad": 0.3
+        }
+        self.decisiones_tomadas = 0
+        self.aciertos = 0
+        
+    def decidir(self, contexto: Dict, opciones: List[Dict]) -> Dict:
+        """Toma la mejor decisión basada en contexto y aprendizaje"""
+        
+        # 1. Analizar contexto completo
+        analisis = self._analizar_contexto(contexto)
+        
+        # 2. Evaluar todas las opciones
+        evaluaciones = []
+        for opcion in opciones:
+            puntaje = self._evaluar_opcion(opcion, analisis)
+            evaluaciones.append({
+                "opcion": opcion,
+                "puntaje": puntaje,
+                "razonamiento": self._generar_razonamiento(opcion, puntaje, analisis)
+            })
+        
+        # 3. Seleccionar la mejor
+        mejor = max(evaluaciones, key=lambda x: x["puntaje"])
+        
+        # 4. Registrar y aprender
+        decision = {
+            "timestamp": datetime.now().isoformat(),
+            "contexto": analisis,
+            "decision": mejor,
+            "confianza": self._calcular_confianza(mejor),
+            "razonamiento": mejor["razonamiento"],
+            "alternativas": [e["opcion"] for e in evaluaciones if e != mejor][:3]
+        }
+        self.historial_decisiones.append(decision)
+        self.decisiones_tomadas += 1
+        
+        # 5. Auto-evaluación
+        if self.decisiones_tomadas > 10:
+            self._auto_evaluar()
+        
+        return decision
     
-    def generar_alertas_proactivas(self, df, stats):
-        alertas = []
-        
-        # Alertas de tráfico
-        if stats["total"] > 70:
-            alerta = {
-                "nivel": "🔴 CRÍTICO",
-                "mensaje": f"Tráfico extremo: {stats['total']} barcos activos.",
-                "tipo": "critical"
-            }
-            alertas.append(alerta)
-            self.registrar_alerta(alerta)
-        elif stats["total"] > 55:
-            alerta = {
-                "nivel": "🟡 ADVERTENCIA",
-                "mensaje": f"Tráfico denso: {stats['total']} barcos activos.",
-                "tipo": "warning"
-            }
-            alertas.append(alerta)
-            self.registrar_alerta(alerta)
-        
-        # Alertas de CWT
-        if stats["cwt"] > 22:
-            alerta = {
-                "nivel": "🔴 CRÍTICO",
-                "mensaje": f"CWT crítico: {stats['cwt']:.1f} horas.",
-                "tipo": "critical"
-            }
-            alertas.append(alerta)
-            self.registrar_alerta(alerta)
-        elif stats["cwt"] > 18:
-            alerta = {
-                "nivel": "🟡 ADVERTENCIA",
-                "mensaje": f"CWT elevado: {stats['cwt']:.1f} horas.",
-                "tipo": "warning"
-            }
-            alertas.append(alerta)
-            self.registrar_alerta(alerta)
-        
-        # Alertas de esclusas
-        for nombre, datos in stats["esclusas"].items():
-            if datos["espera"] > 8:
-                alerta = {
-                    "nivel": "🔴 CRÍTICO",
-                    "mensaje": f"Congestión severa en {nombre}: {datos['espera']} barcos.",
-                    "tipo": "critical"
-                }
-                alertas.append(alerta)
-                self.registrar_alerta(alerta)
-            elif datos["espera"] > 5:
-                alerta = {
-                    "nivel": "🟡 ADVERTENCIA",
-                    "mensaje": f"Congestión en {nombre}: {datos['espera']} barcos.",
-                    "tipo": "warning"
-                }
-                alertas.append(alerta)
-                self.registrar_alerta(alerta)
-        
-        # Alertas climáticas
-        if stats.get("viento", 0) > 30:
-            alerta = {
-                "nivel": "🔴 CRÍTICO",
-                "mensaje": f"Vientos extremos: {stats['viento']:.1f} nudos.",
-                "tipo": "critical"
-            }
-            alertas.append(alerta)
-            self.registrar_alerta(alerta)
-        elif stats.get("viento", 0) > 25:
-            alerta = {
-                "nivel": "🟡 ADVERTENCIA",
-                "mensaje": f"Vientos fuertes: {stats['viento']:.1f} nudos.",
-                "tipo": "warning"
-            }
-            alertas.append(alerta)
-            self.registrar_alerta(alerta)
-        
-        self.alertas_activas = alertas
-        return alertas
+    def _analizar_contexto(self, contexto: Dict) -> Dict:
+        """Analiza múltiples capas de contexto"""
+        return {
+            "operativo": self._analizar_operativo(contexto),
+            "climatico": self._analizar_clima(contexto),
+            "seguridad": self._analizar_seguridad(contexto),
+            "historico": self._analizar_historico(contexto)
+        }
     
-    def generar_recomendaciones(self, df, stats):
+    def _analizar_operativo(self, contexto: Dict) -> Dict:
+        """Analiza estado operativo actual"""
+        barcos = contexto.get("barcos", 0)
+        esclusas = len(contexto.get("esclusas_disponibles", []))
+        demanda = contexto.get("demanda_actual", 0)
+        
+        congestion = (barcos / (esclusas * 4)) if esclusas > 0 else 0.5
+        return {
+            "barcos": barcos,
+            "esclusas": esclusas,
+            "demanda": demanda,
+            "congestion": min(congestion, 1.0),
+            "capacidad_restante": max(0, 1 - congestion)
+        }
+    
+    def _analizar_clima(self, contexto: Dict) -> Dict:
+        """Analiza condiciones climáticas"""
+        viento = contexto.get("condiciones_climaticas", {}).get("viento", 0)
+        oleaje = contexto.get("condiciones_climaticas", {}).get("oleaje", 0)
+        
+        return {
+            "viento": viento,
+            "oleaje": oleaje,
+            "severidad": (viento / 30 + oleaje / 3) / 2,
+            "recomienda_precaucion": viento > 20 or oleaje > 2
+        }
+    
+    def _analizar_seguridad(self, contexto: Dict) -> Dict:
+        """Analiza factores de seguridad"""
+        return {
+            "nivel_riesgo": contexto.get("riesgo", 0.2),
+            "alertas_activas": contexto.get("alertas", []),
+            "requiere_atencion": contexto.get("riesgo", 0) > 0.7
+        }
+    
+    def _analizar_historico(self, contexto: Dict) -> Dict:
+        """Analiza datos históricos relevantes"""
+        historico = contexto.get("historico_reciente", [])
+        if not historico:
+            return {"tendencia": "estable", "confianza": 0.5}
+        
+        # Calcular tendencia simple
+        if len(historico) > 5:
+            valores = [h.get("eficiencia", 0.5) for h in historico[-5:]]
+            tendencia = (valores[-1] - valores[0]) / max(valores[0], 0.01)
+            return {
+                "tendencia": "mejora" if tendencia > 0.05 else "empeora" if tendencia < -0.05 else "estable",
+                "confianza": min(abs(tendencia) * 2, 0.9)
+            }
+        return {"tendencia": "estable", "confianza": 0.5}
+    
+    def _evaluar_opcion(self, opcion: Dict, analisis: Dict) -> float:
+        """Evalúa una opción con pesos dinámicos"""
+        puntaje = 0
+        
+        # Seguridad
+        seguridad_score = self._evaluar_seguridad(opcion, analisis)
+        puntaje += seguridad_score * self.pesos_decision["seguridad"]
+        
+        # Eficiencia
+        eficiencia_score = self._evaluar_eficiencia(opcion, analisis)
+        puntaje += eficiencia_score * self.pesos_decision["eficiencia"]
+        
+        # Costo
+        costo_score = self._evaluar_costo(opcion, analisis)
+        puntaje += costo_score * self.pesos_decision["costo"]
+        
+        # Sostenibilidad
+        sostenibilidad_score = self._evaluar_sostenibilidad(opcion, analisis)
+        puntaje += sostenibilidad_score * self.pesos_decision["sostenibilidad"]
+        
+        return min(max(puntaje, 0), 1.0)
+    
+    def _evaluar_seguridad(self, opcion: Dict, analisis: Dict) -> float:
+        """Evalúa seguridad de una opción"""
+        riesgo = opcion.get("riesgo", 0.2)
+        return 1.0 - riesgo
+    
+    def _evaluar_eficiencia(self, opcion: Dict, analisis: Dict) -> float:
+        """Evalúa eficiencia de una opción"""
+        tiempo = opcion.get("tiempo", 60)
+        eficiencia_base = 1.0 - (tiempo / 120)
+        return min(max(eficiencia_base, 0), 1.0)
+    
+    def _evaluar_costo(self, opcion: Dict, analisis: Dict) -> float:
+        """Evalúa costo de una opción"""
+        costo = opcion.get("costo", 1000)
+        costo_max = 5000
+        return 1.0 - min(costo / costo_max, 1.0)
+    
+    def _evaluar_sostenibilidad(self, opcion: Dict, analisis: Dict) -> float:
+        """Evalúa sostenibilidad de una opción"""
+        co2 = opcion.get("co2", 100)
+        co2_max = 500
+        return 1.0 - min(co2 / co2_max, 1.0)
+    
+    def _generar_razonamiento(self, opcion: Dict, puntaje: float, analisis: Dict) -> str:
+        """Genera explicación legible de la decisión"""
+        razones = []
+        
+        if puntaje > 0.8:
+            razones.append("✅ Excelente opción operativa")
+        elif puntaje > 0.6:
+            razones.append("🟡 Buena opción con margen de mejora")
+        else:
+            razones.append("🔴 Opción con riesgos considerables")
+        
+        # Añadir razones específicas
+        if analisis["operativo"]["congestion"] > 0.7:
+            razones.append(f"⚠️ Alta congestión ({analisis['operativo']['congestion']*100:.0f}%)")
+        
+        if analisis["climatico"]["recomienda_precaucion"]:
+            razones.append("🌪️ Condiciones climáticas adversas")
+        
+        if opcion.get("prioridad") == "alta":
+            razones.append("⭐ Prioridad alta justifica recursos adicionales")
+        
+        return " | ".join(razones)
+    
+    def _calcular_confianza(self, decision: Dict) -> float:
+        """Calcula nivel de confianza en la decisión"""
+        base = 0.7
+        puntaje = decision["puntaje"]
+        historico = self._confianza_historica()
+        return min(base + (puntaje - 0.5) * 0.5 + historico * 0.1, 0.98)
+    
+    def _confianza_historica(self) -> float:
+        """Calcula factor de confianza basado en historial"""
+        if not self.historial_decisiones:
+            return 0.5
+        
+        exitos = sum(1 for d in self.historial_decisiones[-20:] if d.get("exito", False))
+        return exitos / max(len(self.historial_decisiones[-20:]), 1)
+    
+    def _auto_evaluar(self):
+        """Auto-evaluación periódica del sistema"""
+        # Simular evaluación
+        if self.decisiones_tomadas % 10 == 0:
+            aciertos = sum(1 for d in self.historial_decisiones[-10:] if d.get("exito", False))
+            tasa = aciertos / 10
+            self.aciertos += aciertos
+            logger.info(f"Auto-evaluación: Tasa de éxito {tasa*100:.1f}%")
+            
+            if tasa < 0.7:
+                self.nivel_autonomia = max(0.5, self.nivel_autonomia - 0.05)
+                logger.warning(f"Reduciendo autonomía a {self.nivel_autonomia*100:.0f}%")
+            elif tasa > 0.85:
+                self.nivel_autonomia = min(0.95, self.nivel_autonomia + 0.02)
+                logger.info(f"Aumentando autonomía a {self.nivel_autonomia*100:.0f}%")
+
+# ==========================================
+# 2. SISTEMA DE OPTIMIZACIÓN CONTINUA
+# ==========================================
+
+class OptimizadorContinuo:
+    """Optimiza constantemente operaciones usando aprendizaje por refuerzo"""
+    
+    def __init__(self):
+        self.algoritmo = "aprendizaje_por_refuerzo"
+        self.recompensas = []
+        self.politicas_optimas = {}
+        self.tasa_aprendizaje = 0.01
+        self.factor_descuento = 0.95
+        self.modelo_q = defaultdict(lambda: defaultdict(float))
+        self.epsilon = 0.1
+        
+    def optimizar_asignacion_esclusas(self, barcos: List[Dict], esclusas_disponibles: List[str]) -> Dict:
+        """Optimiza asignación de barcos a esclusas usando Q-learning"""
+        # Codificar estado
+        estado = self._codificar_estado(barcos, esclusas_disponibles)
+        
+        # Generar asignaciones posibles
+        asignaciones = self._generar_asignaciones(barcos, esclusas_disponibles)
+        
+        # Seleccionar mejor usando Q-learning
+        mejor = None
+        mejor_valor = -float('inf')
+        
+        for asignacion in asignaciones:
+            valor = self._calcular_valor_asignacion(asignacion, estado)
+            if valor > mejor_valor:
+                mejor_valor = valor
+                mejor = asignacion
+        
+        # Actualizar política
+        if estado not in self.modelo_q:
+            self.modelo_q[estado] = defaultdict(float)
+        
+        self.modelo_q[estado][str(mejor)] = mejor_valor
+        
+        return {
+            "asignacion": mejor,
+            "valor": mejor_valor,
+            "confianza": min(mejor_valor, 1.0),
+            "estado": estado
+        }
+    
+    def _codificar_estado(self, barcos: List[Dict], esclusas: List[str]) -> str:
+        """Codifica el estado actual en un string hash"""
+        estado = {
+            "barcos": len(barcos),
+            "esclusas": len(esclusas),
+            "tipos": [b.get("tipo", "desconocido") for b in barcos[:5]]
+        }
+        return hashlib.md5(str(estado).encode()).hexdigest()[:8]
+    
+    def _generar_asignaciones(self, barcos: List[Dict], esclusas: List[str]) -> List[Dict]:
+        """Genera asignaciones posibles"""
+        asignaciones = []
+        for i, barco in enumerate(barcos):
+            for esclusa in esclusas:
+                asignaciones.append({
+                    "barco": barco.get("nombre", f"B{i+1}"),
+                    "esclusa": esclusa,
+                    "prioridad": barco.get("prioridad", "media"),
+                    "tiempo_estimado": random.randint(20, 60)
+                })
+        return asignaciones[:10]  # Limitar para rendimiento
+    
+    def _calcular_valor_asignacion(self, asignacion: Dict, estado: str) -> float:
+        """Calcula valor de una asignación usando Q-learning"""
+        base = 0.5
+        if asignacion["prioridad"] == "alta":
+            base += 0.3
+        elif asignacion["prioridad"] == "baja":
+            base -= 0.2
+        
+        # Factor tiempo
+        base += 0.1 * (1 - asignacion["tiempo_estimado"] / 60)
+        
+        # Ajuste por aprendizaje
+        if estado in self.modelo_q:
+            valor_aprendido = self.modelo_q[estado].get(str(asignacion), 0)
+            base = 0.7 * base + 0.3 * valor_aprendido
+        
+        return min(max(base, 0), 1.0)
+
+# ==========================================
+# 3. SISTEMA DE PREDICCIÓN Y PREVENCIÓN
+# ==========================================
+
+class SistemaPrediccionPrevencion:
+    """Predice problemas antes de que ocurran y toma medidas preventivas"""
+    
+    def __init__(self):
+        self.modelos_prediccion = {}
+        self.alertas_preventivas = []
+        self.umbrales_prevencion = {
+            "congestion_anticipada": 0.75,
+            "clima_severo_anticipado": 0.7,
+            "falla_anticipada": 0.6,
+            "retraso_anticipado": 0.65
+        }
+        self.historial_predicciones = []
+        
+    def predecir_y_prevenir(self, datos_actuales: Dict) -> Dict:
+        """Predice problemas y genera acciones preventivas"""
+        predicciones = self._generar_predicciones(datos_actuales)
+        acciones_preventivas = []
+        
+        for prediccion in predicciones:
+            if self._es_critico(prediccion):
+                accion = self._generar_accion_preventiva(prediccion)
+                acciones_preventivas.append(accion)
+                
+                if accion.get("urgencia", 0) > 0.8:
+                    self._ejecutar_accion_preventiva(accion)
+        
+        return {
+            "predicciones": predicciones,
+            "acciones_preventivas": acciones_preventivas,
+            "nivel_alerta": self._calcular_nivel_alerta(predicciones)
+        }
+    
+    def _generar_predicciones(self, datos: Dict) -> List[Dict]:
+        """Genera predicciones basadas en datos actuales"""
+        predicciones = []
+        
+        # Predicción de congestión
+        barcos = datos.get("barcos", 0)
+        esclusas = len(datos.get("esclusas_disponibles", []))
+        congestion_prob = min((barcos / (esclusas * 4)) * 1.2, 1.0)
+        
+        if congestion_prob > self.umbrales_prevencion["congestion_anticipada"]:
+            predicciones.append({
+                "tipo": "congestion",
+                "probabilidad": congestion_prob,
+                "tiempo_estimado": datetime.now() + timedelta(hours=2),
+                "severidad": "alta" if congestion_prob > 0.85 else "media"
+            })
+        
+        # Predicción climática
+        viento = datos.get("condiciones_climaticas", {}).get("viento", 0)
+        if viento > 25:
+            predicciones.append({
+                "tipo": "clima_severo",
+                "probabilidad": min((viento - 20) / 20, 1.0),
+                "tiempo_estimado": datetime.now() + timedelta(hours=1),
+                "severidad": "alta" if viento > 30 else "media"
+            })
+        
+        return predicciones
+    
+    def _es_critico(self, prediccion: Dict) -> bool:
+        """Determina si una predicción es crítica"""
+        umbral = self.umbrales_prevencion.get(prediccion["tipo"] + "_anticipado", 0.7)
+        return prediccion["probabilidad"] > umbral
+    
+    def _generar_accion_preventiva(self, prediccion: Dict) -> Dict:
+        """Genera acción preventiva para una predicción"""
+        acciones = {
+            "congestion": {
+                "accion": "Redistribuir tráfico a esclusas alternativas",
+                "urgencia": 0.8
+            },
+            "clima_severo": {
+                "accion": "Activar protocolo de seguridad climática",
+                "urgencia": 0.9
+            },
+            "falla": {
+                "accion": "Programar mantenimiento preventivo",
+                "urgencia": 0.7
+            },
+            "retraso": {
+                "accion": "Ajustar horarios y prioridades",
+                "urgencia": 0.6
+            }
+        }
+        
+        base = acciones.get(prediccion["tipo"], {"accion": "Monitorear situación", "urgencia": 0.5})
+        return {
+            "tipo": prediccion["tipo"],
+            "accion": base["accion"],
+            "urgencia": base["urgencia"] * prediccion["probabilidad"],
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    def _ejecutar_accion_preventiva(self, accion: Dict):
+        """Simula ejecución de acción preventiva"""
+        logger.info(f"🛡️ Ejecutando acción preventiva: {accion['accion']}")
+        self.alertas_preventivas.append(accion)
+    
+    def _calcular_nivel_alerta(self, predicciones: List[Dict]) -> str:
+        """Calcula nivel de alerta general"""
+        if not predicciones:
+            return "🟢 Normal"
+        
+        max_prob = max(p["probabilidad"] for p in predicciones)
+        if max_prob > 0.85:
+            return "🔴 Crítico"
+        elif max_prob > 0.7:
+            return "🟡 Advertencia"
+        return "🟢 Normal"
+
+# ==========================================
+# 4. SISTEMA DE MEMORIA Y RAZONAMIENTO
+# ==========================================
+
+class MemoriaRazonamiento:
+    """Sistema de memoria episódica y semántica para razonamiento contextual"""
+    
+    def __init__(self):
+        self.memoria_episodica = []
+        self.memoria_semantica = defaultdict(list)
+        self.memoria_procedimental = []
+        self.red_semantica = self._construir_red_semantica()
+        self.capacidad_maxima = 1000
+        
+    def _construir_red_semantica(self) -> Dict:
+        """Construye red semántica inicial"""
+        return {
+            "canal": ["esclusas", "barcos", "tráfico", "clima"],
+            "esclusas": ["gatun", "pedro_miguel", "miraflores", "capacidad", "tiempo_espera"],
+            "barcos": ["tipo", "prioridad", "velocidad", "carga", "origen", "destino"],
+            "clima": ["viento", "oleaje", "marea", "visibilidad"],
+            "operaciones": ["eficiencia", "costo", "seguridad", "optimizacion"]
+        }
+    
+    def razonar(self, problema: str, contexto: Dict) -> Dict:
+        """Razonamiento basado en experiencias pasadas y conocimiento"""
+        # 1. Buscar en memoria episódica
+        experiencias = self._buscar_experiencias(problema, contexto)
+        
+        # 2. Buscar en memoria semántica
+        conocimiento = self._buscar_conocimiento(problema)
+        
+        # 3. Razonar
+        if experiencias:
+            return self._razonar_por_casos(problema, experiencias, contexto)
+        elif conocimiento:
+            return self._razonar_por_reglas(problema, conocimiento, contexto)
+        else:
+            return self._razonar_creativamente(problema, contexto)
+    
+    def _buscar_experiencias(self, problema: str, contexto: Dict) -> List[Dict]:
+        """Busca experiencias similares"""
+        similares = []
+        palabras_clave = set(problema.lower().split())
+        
+        for exp in self.memoria_episodica[-100:]:
+            exp_palabras = set(exp.get("problema", "").lower().split())
+            similitud = len(palabras_clave & exp_palabras) / max(len(palabras_clave), 1)
+            if similitud > 0.3:
+                similares.append(exp)
+        
+        return similares[:5]
+    
+    def _buscar_conocimiento(self, problema: str) -> List[str]:
+        """Busca conocimiento relevante"""
+        conocimiento = []
+        palabras = problema.lower().split()
+        
+        for palabra in palabras:
+            if palabra in self.red_semantica:
+                conocimiento.extend(self.red_semantica[palabra])
+            else:
+                for clave, valor in self.red_semantica.items():
+                    if palabra in valor:
+                        conocimiento.append(clave)
+        
+        return list(set(conocimiento))
+    
+    def _razonar_por_casos(self, problema: str, experiencias: List[Dict], contexto: Dict) -> Dict:
+        """Razona usando casos similares"""
+        # Encontrar caso más similar
+        mejor_caso = max(experiencias, key=lambda x: x.get("efectividad", 0))
+        
+        return {
+            "metodo": "razonamiento_por_casos",
+            "solucion": mejor_caso.get("solucion", "Adaptar solución previa"),
+            "confianza": mejor_caso.get("efectividad", 0.6),
+            "caso_referencia": mejor_caso.get("problema", "Caso similar"),
+            "adaptacion": self._adaptar_solucion(mejor_caso, contexto)
+        }
+    
+    def _razonar_por_reglas(self, problema: str, conocimiento: List[str], contexto: Dict) -> Dict:
+        """Razona usando reglas y conocimiento"""
+        reglas = []
+        if "esclusas" in conocimiento and contexto.get("barcos", 0) > 30:
+            reglas.append("Alto volumen de barcos requiere optimización de esclusas")
+        
+        if "clima" in conocimiento and contexto.get("viento", 0) > 20:
+            reglas.append("Condiciones climáticas adversas requieren precaución")
+        
+        return {
+            "metodo": "razonamiento_por_reglas",
+            "solucion": reglas[0] if reglas else "Monitoreo continuo",
+            "confianza": 0.7,
+            "reglas_aplicadas": reglas
+        }
+    
+    def _razonar_creativamente(self, problema: str, contexto: Dict) -> Dict:
+        """Razonamiento creativo para problemas nuevos"""
+        return {
+            "metodo": "razonamiento_creativo",
+            "solucion": "Nueva solución propuesta basada en principios generales",
+            "confianza": 0.5,
+            "innovacion": True
+        }
+    
+    def _adaptar_solucion(self, caso: Dict, contexto: Dict) -> str:
+        """Adapta una solución a un nuevo contexto"""
+        adaptaciones = []
+        if contexto.get("barcos", 0) > caso.get("barcos", 0):
+            adaptaciones.append("Ajustar por mayor volumen de tráfico")
+        if contexto.get("viento", 0) > caso.get("viento", 0):
+            adaptaciones.append("Incorporar factores climáticos")
+        
+        return " | ".join(adaptaciones) if adaptaciones else "Aplicar solución directamente"
+    
+    def aprender_experiencia(self, problema: str, solucion: str, resultado: Dict):
+        """Aprende de experiencias"""
+        experiencia = {
+            "problema": problema,
+            "solucion": solucion,
+            "resultado": resultado,
+            "timestamp": datetime.now().isoformat(),
+            "efectividad": self._evaluar_efectividad(resultado)
+        }
+        
+        self.memoria_episodica.append(experiencia)
+        
+        # Limitar memoria
+        if len(self.memoria_episodica) > self.capacidad_maxima:
+            self.memoria_episodica = self.memoria_episodica[-self.capacidad_maxima:]
+    
+    def _evaluar_efectividad(self, resultado: Dict) -> float:
+        """Evalúa efectividad de una experiencia"""
+        if resultado.get("exitoso", False):
+            return 0.9
+        return 0.3
+
+# ==========================================
+# 5. SISTEMA DE OPTIMIZACIÓN DE RECURSOS
+# ==========================================
+
+class OptimizadorRecursos:
+    """Optimiza la asignación y uso de todos los recursos del sistema"""
+    
+    def __init__(self):
+        self.recursos = {
+            "esclusas": {"capacidad": 4, "tiempo_ciclo": 45, "costo_operacion": 1000},
+            "remolcadores": {"cantidad": 8, "costo_hora": 500, "velocidad": 8},
+            "pilotos": {"cantidad": 24, "costo_hora": 300},
+            "equipo_mantenimiento": {"equipos": 5, "costo_hora": 400}
+        }
+        self.asignacion_actual = {}
+        self.eficiencia_historica = []
+    
+    def optimizar_recursos_dinamico(self, demanda: Dict, condiciones: Dict) -> Dict:
+        """Optimiza asignación de recursos en tiempo real"""
+        # 1. Evaluar demanda
+        demanda_actual = self._evaluar_demanda(demanda)
+        
+        # 2. Calcular recursos necesarios
+        recursos_necesarios = self._calcular_recursos_necesarios(demanda_actual, condiciones)
+        
+        # 3. Optimizar asignación
+        asignacion = self._asignar_recursos_optimos(recursos_necesarios)
+        
+        # 4. Calcular eficiencia
+        eficiencia = self._calcular_eficiencia_asignacion(asignacion)
+        
+        # 5. Ajustar si es necesario
+        if eficiencia < 0.8:
+            asignacion = self._rebalancear_recursos(asignacion)
+            eficiencia = self._calcular_eficiencia_asignacion(asignacion)
+        
+        self.asignacion_actual = asignacion
+        
+        return {
+            "asignacion": asignacion,
+            "eficiencia": eficiencia,
+            "demanda": demanda_actual,
+            "recomendaciones": self._generar_recomendaciones(asignacion)
+        }
+    
+    def _evaluar_demanda(self, demanda: Dict) -> Dict:
+        """Evalúa demanda actual"""
+        return {
+            "barcos": demanda.get("barcos", 0),
+            "urgencia": demanda.get("urgencia", 0.5),
+            "complejidad": demanda.get("complejidad", 0.5)
+        }
+    
+    def _calcular_recursos_necesarios(self, demanda: Dict, condiciones: Dict) -> Dict:
+        """Calcula recursos necesarios para la demanda"""
+        barcos = demanda["barcos"]
+        urgencia = demanda["urgencia"]
+        
+        esclusas_necesarias = max(1, int(barcos / 4))
+        remolcadores_necesarios = max(2, int(barcos / 6))
+        pilotos_necesarios = max(3, int(barcos / 3))
+        
+        # Ajustar por condiciones climáticas
+        if condiciones.get("viento", 0) > 20:
+            remolcadores_necesarios += 2
+            pilotos_necesarios += 2
+        
+        return {
+            "esclusas": esclusas_necesarias,
+            "remolcadores": remolcadores_necesarios,
+            "pilotos": pilotos_necesarios,
+            "mantenimiento": max(1, int(barcos / 20))
+        }
+    
+    def _asignar_recursos_optimos(self, recursos_necesarios: Dict) -> Dict:
+        """Asigna recursos de manera óptima"""
+        asignacion = {}
+        
+        for recurso, cantidad in recursos_necesarios.items():
+            disponible = self.recursos.get(recurso, {}).get("cantidad", 0)
+            asignacion[recurso] = {
+                "asignado": min(cantidad, disponible),
+                "disponible": disponible,
+                "utilizacion": min(cantidad / max(disponible, 1), 1.0)
+            }
+        
+        return asignacion
+    
+    def _calcular_eficiencia_asignacion(self, asignacion: Dict) -> float:
+        """Calcula eficiencia de la asignación"""
+        if not asignacion:
+            return 0.5
+        
+        eficiencias = []
+        for datos in asignacion.values():
+            eficiencia = 1.0 - (datos.get("disponible", 0) - datos.get("asignado", 0)) / max(datos.get("disponible", 1), 1)
+            eficiencias.append(eficiencia)
+        
+        return sum(eficiencias) / len(eficiencias)
+    
+    def _rebalancear_recursos(self, asignacion: Dict) -> Dict:
+        """Rebalancea recursos para mejorar eficiencia"""
+        for recurso, datos in asignacion.items():
+            if datos["utilizacion"] < 0.5:
+                # Redistribuir recursos
+                datos["asignado"] = int(datos["asignado"] * 0.8)
+                datos["utilizacion"] = datos["asignado"] / max(datos["disponible"], 1)
+        
+        return asignacion
+    
+    def _generar_recomendaciones(self, asignacion: Dict) -> List[str]:
+        """Genera recomendaciones basadas en asignación"""
         recomendaciones = []
         
-        if stats["total"] > 60:
-            recomendaciones.append("💡 Activar protocolo de tráfico denso. Priorizar barcos con carga urgente.")
+        for recurso, datos in asignacion.items():
+            if datos["utilizacion"] > 0.9:
+                recomendaciones.append(f"⚠️ Alta utilización de {recurso} - Considerar aumentar capacidad")
+            elif datos["utilizacion"] < 0.3:
+                recomendaciones.append(f"💡 Baja utilización de {recurso} - Posible exceso de capacidad")
         
-        if stats["cwt"] > 20:
-            recomendaciones.append("💡 Optimizar tiempos de esclusas. Reducir velocidad de entrada.")
-        
-        if stats["espera"] > 10:
-            recomendaciones.append("💡 Reasignar barcos en espera a esclusas con menor carga.")
-        
-        if stats.get("viento", 0) > 25:
-            recomendaciones.append("💡 Reducir velocidad de navegación. Activar protocolos de seguridad.")
-        
-        for nombre, datos in stats["esclusas"].items():
-            if datos["espera"] > 5:
-                recomendaciones.append(f"💡 Optimizar operaciones en {nombre}. {datos['espera']} barcos en espera.")
-                break
-        
-        if not recomendaciones:
-            recomendaciones.append("✅ Estado normal. Continuar con operaciones regulares.")
-        
-        self.recomendaciones = recomendaciones
         return recomendaciones
-    
-    def generar_resumen_proactivo(self, df, stats):
-        resumen = []
-        resumen.append(f"📊 **Resumen Operativo**")
-        resumen.append(f"• {stats['total']} barcos activos en el Canal.")
-        resumen.append(f"• {stats['norte']} hacia el Norte, {stats['sur']} hacia el Sur.")
-        resumen.append(f"• CWT: {stats['cwt']:.1f}h - {stats['nivel']}")
-        resumen.append(f"• {stats['espera']} barcos en espera en esclusas.")
-        resumen.append(f"• Velocidad promedio: {stats['velocidad_prom']:.1f} nudos.")
-        
-        if stats.get("viento", 0) > 20:
-            resumen.append(f"• 💨 Vientos de {stats['viento']:.1f} nudos - Condiciones adversas.")
-        else:
-            resumen.append(f"• 🌤️ Clima favorable para navegación.")
-        
-        if stats.get("oleaje", 0) > 1.5:
-            resumen.append(f"• 🌊 Oleaje de {stats['oleaje']:.1f}m - Moderado.")
-        else:
-            resumen.append(f"• 🌊 Oleaje de {stats['oleaje']:.1f}m - Calmo.")
-        
-        # Agregar tendencia
-        tendencia = self.analizar_tendencia()
-        resumen.append(f"• {tendencia}")
-        
-        resumen.append(f"• 🧠 Confianza del sistema: {int(self.confianza * 100)}%")
-        
-        return "\n".join(resumen)
-    
-    # ==========================================
-    # PREDICCIONES AVANZADAS
-    # ==========================================
-    
-    def predecir_congestion(self, df, stats):
-        riesgo = 0
-        if stats["total"] > 50: riesgo += 30
-        if stats["espera"] > 8: riesgo += 25
-        if stats["cwt"] > 18: riesgo += 20
-        if stats.get("viento", 0) > 20: riesgo += 15
-        if stats.get("oleaje", 0) > 2: riesgo += 10
-        
-        # Factor de tendencia
-        tendencia = self.calcular_tendencia()
-        if tendencia > 0.1:
-            riesgo += 10
-        
-        if riesgo > 75:
-            nivel = "🔴 Alto"
-            mensaje = "Se espera congestión significativa en las próximas horas."
-        elif riesgo > 45:
-            nivel = "🟡 Moderado"
-            mensaje = "Posible congestión en las próximas horas."
-        else:
-            nivel = "🟢 Bajo"
-            mensaje = "Tráfico fluido esperado."
-        
-        return [{
-            "nivel": nivel,
-            "mensaje": mensaje,
-            "riesgo": min(riesgo, 100),
-            "factores": {
-                "barcos": stats["total"],
-                "espera": stats["espera"],
-                "cwt": stats["cwt"],
-                "viento": stats.get("viento", 0),
-                "oleaje": stats.get("oleaje", 0),
-                "tendencia": tendencia
-            }
-        }]
-    
-    # ==========================================
-    # MÉTODOS EXISTENTES (MANTENIDOS)
-    # ==========================================
-    
-    def recordar(self, mensaje):
-        self.memoria_conversaciones.append({
-            "timestamp": datetime.now().isoformat(),
-            "mensaje": mensaje
-        })
-        if len(self.memoria_conversaciones) > 100:
-            self.memoria_conversaciones = self.memoria_conversaciones[-100:]
-    
-    def aprender(self, texto):
-        self.aprendizaje.append({"fecha": datetime.now().isoformat(), "texto": texto})
-        self.logs.append({"timestamp": datetime.now().isoformat(), "accion": "aprendizaje", "datos": texto})
-        self.guardar_estado()
-        return "✅ Anayansi ha aprendido: " + texto[:50] + "..."
-    
-    def aprender_automaticamente(self, df, stats):
-        nuevos = []
-        if stats["total"] > 60:
-            msg = "🔴 Alto tráfico detectado: " + str(stats["total"]) + " barcos activos."
-            self.aprender(msg); nuevos.append(msg)
-        if stats["cwt"] > 20:
-            msg = "🔴 CWT crítico: " + str(round(stats["cwt"], 1)) + " horas."
-            self.aprender(msg); nuevos.append(msg)
-        elif stats["cwt"] > 15:
-            msg = "🟡 CWT elevado: " + str(round(stats["cwt"], 1)) + " horas."
-            self.aprender(msg); nuevos.append(msg)
-        for nombre, datos in stats["esclusas"].items():
-            if datos["espera"] > 6:
-                msg = "🔴 Congestión en " + nombre + ": " + str(datos["espera"]) + " barcos en espera."
-                self.aprender(msg); nuevos.append(msg)
-            elif datos["espera"] > 3:
-                msg = "🟡 Tráfico moderado en " + nombre + ": " + str(datos["espera"]) + " barcos en espera."
-                self.aprender(msg); nuevos.append(msg)
-        if stats.get("viento", 0) > 25:
-            msg = "🌪️ Vientos fuertes: " + str(round(stats["viento"], 1)) + " nudos."
-            self.aprender(msg); nuevos.append(msg)
-        if stats.get("oleaje", 0) > 2.5:
-            msg = "🌊 Oleaje elevado: " + str(round(stats["oleaje"], 1)) + " metros."
-            self.aprender(msg); nuevos.append(msg)
-        self.guardar_estado()
-        return nuevos
-    
-    def barcos_ultimas_24h(self, df):
-        ahora = datetime.now()
-        historial = []
-        for _, b in df.iterrows():
-            horas = np.random.uniform(0, 24)
-            ts = ahora - timedelta(hours=horas)
-            historial.append({
-                "timestamp": ts.isoformat(),
-                "nombre": b["nombre"],
-                "tipo": b["tipo"],
-                "direccion": b["direccion"],
-                "esclusa": b["esclusa"],
-                "velocidad": b["velocidad"]
-            })
-        historial.sort(key=lambda x: x["timestamp"], reverse=True)
-        return historial
-    
-    def razonar(self, pregunta, df, stats):
-        p = pregunta.lower()
-        ideas = []
-        if "clima" in p or "viento" in p:
-            if stats.get("viento", 0) > 20:
-                ideas.append("🌪️ Vientos fuertes pueden afectar la navegación.")
-                if stats["total"] > 40:
-                    ideas.append("⚠️ Combinación de vientos fuertes y tráfico denso requiere precaución.")
-        if "esclusa" in p or "espera" in p:
-            espera_total = sum([d["espera"] for d in stats["esclusas"].values()])
-            if espera_total > 15:
-                ideas.append("⏳ Alta congestión en esclusas. Tiempos de espera prolongados.")
-            elif espera_total > 8:
-                ideas.append("⏳ Congestión moderada en esclusas.")
-        if "cwt" in p:
-            if stats["cwt"] > 20:
-                ideas.append("⏱️ CWT crítico. El Canal está operando al límite.")
-                ideas.append("📊 " + str(stats["total"]) + " barcos activos contribuyen a la congestión.")
-        if not ideas:
-            ideas.append("🧠 He analizado tu consulta. No encuentro conexiones adicionales relevantes.")
-        return "\n".join(ideas)
-    
-    def preguntar(self, pregunta, df, stats):
-        p = pregunta.lower()
-        self.logs.append({"timestamp": datetime.now().isoformat(), "accion": "pregunta", "datos": pregunta})
-        self.recordar(pregunta)
-        
-        for _, barco in df.iterrows():
-            self.historial_barcos.append({
-                "timestamp": datetime.now().isoformat(),
-                "nombre": barco["nombre"],
-                "velocidad": barco["velocidad"],
-                "direccion": barco["direccion"],
-                "esclusa": barco["esclusa"]
-            })
-            if len(self.historial_barcos) > 100:
-                self.historial_barcos = self.historial_barcos[-100:]
-        
-        for esclusa in ["gatun", "pedro miguel", "miraflores"]:
-            if esclusa in p and ("barco" in p or "pasando" in p):
-                df_e = df[df["esclusa"].str.lower() == esclusa]
-                if not df_e.empty:
-                    respuesta = "🚢 **Barcos en " + esclusa.title() + ":**\n\n"
-                    for _, b in df_e.iterrows():
-                        dir = "⬆️ Norte" if b["direccion"] == "Norte" else "⬇️ Sur"
-                        respuesta += "• **" + b["nombre"] + "** - " + b["tipo"] + " - " + dir + " (" + str(round(b["velocidad"], 1)) + " nudos)\n"
-                    datos_esclusa = stats["esclusas"].get(esclusa.title(), {})
-                    if datos_esclusa.get("espera", 0) > 5:
-                        respuesta += "\n💡 **Insight:** Esta esclusa tiene " + str(datos_esclusa["espera"]) + " barcos en espera. Posible demora."
-                    return respuesta
-                return "No hay barcos en " + esclusa.title() + " en este momento."
-        
-        if "predecir" in p or "futuro" in p or "congestion" in p:
-            predicciones = self.predecir_congestion(df, stats)
-            if predicciones:
-                pred = predicciones[0]
-                respuesta = "🔮 **Predicción de congestión:**\n\n"
-                respuesta += "• Nivel: " + pred["nivel"] + "\n"
-                respuesta += "• " + pred["mensaje"] + "\n"
-                respuesta += "• Riesgo: " + str(pred["riesgo"]) + "%\n\n"
-                respuesta += "📊 **Factores:**\n"
-                respuesta += "• Barcos: " + str(pred["factores"]["barcos"]) + "\n"
-                respuesta += "• En espera: " + str(pred["factores"]["espera"]) + "\n"
-                respuesta += "• CWT: " + str(round(pred["factores"]["cwt"], 1)) + "h\n"
-                respuesta += "• Tendencia: " + str(round(pred["factores"].get("tendencia", 0), 2))
-                return respuesta
-        
-        if "por que" in p or "explica" in p or "razon" in p:
-            return "🧠 **Razonamiento:**\n\n" + self.razonar(pregunta, df, stats)
-        
-        if "clima" in p or "viento" in p:
-            return "🌤️ **Clima:**\n• Temp: " + str(round(stats.get("temp", 25), 1)) + "°C\n• Viento: " + str(round(stats.get("viento", 15), 1)) + " nudos\n• Humedad: " + str(round(stats.get("humedad", 70), 0)) + "%"
-        
-        if "marea" in p:
-            return "🌊 **Marea:** " + str(round(stats.get("marea", 2.5), 1)) + "m"
-        
-        if "profundidad" in p:
-            return "📏 **Profundidad:** " + str(round(stats.get("profundidad", 13.5), 1)) + "m"
-        
-        if "oleaje" in p:
-            return "🌊 **Oleaje:** " + str(round(stats.get("oleaje", 1.0), 1)) + "m"
-        
-        if "pas" in p and "barco" in p:
-            historial = self.barcos_ultimas_24h(df)
-            if historial:
-                respuesta = "📋 **Últimos 24h:**\n\n"
-                for i, b in enumerate(historial[:6]):
-                    hora = b["timestamp"][11:16]
-                    dir = "⬆️" if b["direccion"] == "Norte" else "⬇️"
-                    respuesta += str(i+1) + ". " + b["nombre"] + " " + dir + " (" + hora + ")\n"
-                return respuesta
-            return "No hay registros."
-        
-        if "cwt" in p:
-            return "⏱️ **CWT:** " + str(round(stats["cwt"], 1)) + "h - " + stats["nivel"]
-        
-        if "barco" in p:
-            return "🚢 **" + str(stats["total"]) + " barcos**\n⬆️ " + str(stats["norte"]) + " Norte\n⬇️ " + str(stats["sur"]) + " Sur"
-        
-        if "esclusa" in p:
-            return "⚙️ " + " | ".join([n + ": " + str(d["total"]) + " barcos" for n, d in stats["esclusas"].items()])
-        
-        if "aprender" in p or "enseñar" in p:
-            return "🧠 Puedes enseñarme en la pestaña **Aprendizaje**."
-        
-        return "🌊 " + str(stats["total"]) + " barcos | CWT: " + str(round(stats["cwt"], 1)) + "h | " + stats["nivel"]
-    
-    def generar_reporte(self, df, stats):
-        lineas = []
-        lineas.append("=" * 50)
-        lineas.append("ANAYANSI - REPORTE INTELIGENTE")
-        lineas.append("=" * 50)
-        lineas.append(datetime.now().strftime("%Y-%m-%d %H:%M"))
-        lineas.append("")
-        lineas.append("📊 OPERATIVO:")
-        lineas.append("  Barcos: " + str(stats["total"]))
-        lineas.append("  CWT: " + str(round(stats["cwt"], 1)) + "h - " + stats["nivel"])
-        lineas.append("  Velocidad: " + str(round(stats["velocidad_prom"], 1)) + " nudos")
-        lineas.append("  Espera: " + str(stats["espera"]))
-        lineas.append("  Norte: " + str(stats["norte"]) + " | Sur: " + str(stats["sur"]))
-        lineas.append("")
-        lineas.append("⚙️ ESLUSCAS:")
-        for n, d in stats["esclusas"].items():
-            estado = "✅" if d["espera"] < 4 else "🟡" if d["espera"] < 8 else "🔴"
-            lineas.append("  " + n + ": " + str(d["total"]) + " barcos " + estado)
-        lineas.append("")
-        lineas.append("🌤️ CLIMA:")
-        lineas.append("  Temp: " + str(round(stats.get("temp", 25), 1)) + "°C")
-        lineas.append("  Viento: " + str(round(stats.get("viento", 15), 1)) + " nudos")
-        lineas.append("  Marea: " + str(round(stats.get("marea", 2.5), 1)) + "m")
-        lineas.append("  Oleaje: " + str(round(stats.get("oleaje", 1.0), 1)) + "m")
-        lineas.append("")
-        lineas.append("🧠 APRENDIZAJE:")
-        lineas.append("  Registros: " + str(len(self.aprendizaje)))
-        lineas.append("  Memoria: " + str(len(self.memoria_conversaciones)) + " conversaciones")
-        lineas.append("  Confianza: " + str(int(self.confianza * 100)) + "%")
-        lineas.append("  Precisión histórica: " + str(round(np.mean(self.precision_historica) if self.precision_historica else 0, 2)))
-        lineas.append("")
-        lineas.append("📈 TENDENCIA:")
-        lineas.append("  " + self.analizar_tendencia())
-        lineas.append("")
-        lineas.append("=" * 50)
-        return "\n".join(lineas)
 
 # ==========================================
-# GENERAR DATOS
+# 6. SISTEMA DE EVALUACIÓN CONTINUA
+# ==========================================
+
+class SistemaEvaluacionContinua:
+    """Evalúa continuamente el rendimiento del sistema y genera mejoras"""
+    
+    def __init__(self):
+        self.kpis = {
+            "eficiencia_operativa": 0,
+            "satisfaccion_usuario": 0,
+            "tiempo_respuesta": 0,
+            "precision_prediccion": 0,
+            "costo_operativo": 0,
+            "sostenibilidad": 0
+        }
+        self.benchmarks = {
+            "eficiencia_operativa": 0.85,
+            "satisfaccion_usuario": 0.9,
+            "tiempo_respuesta": 2.0,
+            "precision_prediccion": 0.9,
+            "costo_operativo": 100000,
+            "sostenibilidad": 0.75
+        }
+        self.plan_mejora = []
+        self.historial_evaluaciones = []
+    
+    def evaluar_y_mejorar(self, datos_actuales: Dict) -> Dict:
+        """Evaluación automática y generación de plan de mejora"""
+        # 1. Medir KPIs actuales
+        kpis_actuales = self._medir_kpis(datos_actuales)
+        
+        # 2. Comparar con benchmarks
+        brechas = self._identificar_brechas(kpis_actuales)
+        
+        # 3. Generar plan de mejora
+        plan_mejora = self._generar_plan_mejora(brechas)
+        
+        # 4. Priorizar mejoras
+        plan_priorizado = self._priorizar_mejoras(plan_mejora)
+        
+        # 5. Registrar
+        evaluacion = {
+            "timestamp": datetime.now().isoformat(),
+            "kpis": kpis_actuales,
+            "brechas": brechas,
+            "plan_mejora": plan_priorizado
+        }
+        self.historial_evaluaciones.append(evaluacion)
+        
+        return evaluacion
+    
+    def _medir_kpis(self, datos: Dict) -> Dict:
+        """Mide KPIs del sistema"""
+        return {
+            "eficiencia_operativa": datos.get("eficiencia", 0.8),
+            "satisfaccion_usuario": datos.get("satisfaccion", 0.85),
+            "tiempo_respuesta": datos.get("tiempo_respuesta", 1.5),
+            "precision_prediccion": datos.get("precision", 0.88),
+            "costo_operativo": datos.get("costo", 95000),
+            "sostenibilidad": datos.get("sostenibilidad", 0.7)
+        }
+    
+    def _identificar_brechas(self, kpis: Dict) -> Dict:
+        """Identifica brechas entre KPIs actuales y benchmarks"""
+        brechas = {}
+        
+        for kpi, valor in kpis.items():
+            benchmark = self.benchmarks.get(kpi, 0)
+            if isinstance(valor, (int, float)):
+                if valor < benchmark:
+                    brechas[kpi] = {
+                        "actual": valor,
+                        "objetivo": benchmark,
+                        "brecha": benchmark - valor,
+                        "prioridad": "alta" if (benchmark - valor) / benchmark > 0.15 else "media"
+                    }
+        
+        return brechas
+    
+    def _generar_plan_mejora(self, brechas: Dict) -> List[Dict]:
+        """Genera plan de mejora basado en brechas"""
+        plan = []
+        
+        for kpi, datos in brechas.items():
+            if datos["prioridad"] == "alta":
+                plan.append({
+                    "area": kpi,
+                    "accion": self._sugerir_mejora(kpi),
+                    "impacto_estimado": datos["brecha"] / datos["objetivo"],
+                    "tiempo_estimado": "3-5 días"
+                })
+        
+        return plan
+    
+    def _sugerir_mejora(self, kpi: str) -> str:
+        """Sugiere mejora para un KPI específico"""
+        sugerencias = {
+            "eficiencia_operativa": "Optimizar procesos de asignación de esclusas",
+            "satisfaccion_usuario": "Mejorar tiempos de respuesta y comunicación",
+            "tiempo_respuesta": "Optimizar código y aumentar capacidad de procesamiento",
+            "precision_prediccion": "Entrenar modelo con datos más recientes",
+            "costo_operativo": "Identificar y eliminar ineficiencias operativas",
+            "sostenibilidad": "Implementar prácticas de reducción de emisiones"
+        }
+        return sugerencias.get(kpi, "Monitorear y ajustar continuamente")
+    
+    def _priorizar_mejoras(self, plan: List[Dict]) -> List[Dict]:
+        """Prioriza mejoras por impacto"""
+        return sorted(plan, key=lambda x: x["impacto_estimado"], reverse=True)
+
+# ==========================================
+# 7. SISTEMA COMPLETO - INTEGRACIÓN
+# ==========================================
+
+class SistemaCompleto:
+    """Integra todos los módulos en un sistema cohesivo de IA operativa"""
+    
+    def __init__(self):
+        self.motor_decision = MotorDecisionAutonoma()
+        self.optimizador = OptimizadorContinuo()
+        self.prediccion = SistemaPrediccionPrevencion()
+        self.memoria = MemoriaRazonamiento()
+        self.recursos = OptimizadorRecursos()
+        self.evaluacion = SistemaEvaluacionContinua()
+        
+        self.modo_operativo = "autonomo"
+        self.nivel_autonomia = 0.85
+        self.estado_sistema = "operativo"
+        self.metricas_sistema = {
+            "decisiones_tomadas": 0,
+            "alertas_generadas": 0,
+            "optimizaciones_realizadas": 0,
+            "tiempo_promedio_respuesta": 0
+        }
+        
+    def procesar_operacion(self, datos_operativos: Dict) -> Dict:
+        """Procesa una operación completa de principio a fin"""
+        
+        # 1. Analizar situación
+        analisis = self.motor_decision._analizar_contexto(datos_operativos)
+        
+        # 2. Generar predicciones
+        predicciones = self.prediccion.predecir_y_prevenir(datos_operativos)
+        
+        # 3. Optimizar recursos
+        recursos = self.recursos.optimizar_recursos_dinamico(
+            {"barcos": datos_operativos.get("barcos", 0)},
+            datos_operativos.get("condiciones_climaticas", {})
+        )
+        
+        # 4. Generar opciones y tomar decisiones
+        opciones = self._generar_opciones(datos_operativos)
+        decisiones = self.motor_decision.decidir(datos_operativos, opciones)
+        
+        # 5. Aprender de la experiencia
+        self.memoria.aprender_experiencia(
+            str(datos_operativos),
+            str(decisiones),
+            {"exitoso": True}
+        )
+        
+        # 6. Evaluar rendimiento
+        evaluacion = self.evaluacion.evaluar_y_mejorar({
+            "eficiencia": recursos["eficiencia"],
+            "tiempo_respuesta": 1.5,
+            "precision": decisiones["confianza"],
+            "sostenibilidad": 0.75
+        })
+        
+        # 7. Actualizar métricas
+        self.metricas_sistema["decisiones_tomadas"] += 1
+        self.metricas_sistema["alertas_generadas"] += len(predicciones["acciones_preventivas"])
+        self.metricas_sistema["optimizaciones_realizadas"] += 1
+        
+        return {
+            "analisis": analisis,
+            "predicciones": predicciones,
+            "recursos": recursos,
+            "decisiones": decisiones,
+            "evaluacion": evaluacion,
+            "metricas": self.metricas_sistema,
+            "confianza_sistema": self.nivel_autonomia,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    def _generar_opciones(self, datos: Dict) -> List[Dict]:
+        """Genera opciones para la toma de decisiones"""
+        opciones = []
+        
+        esclusas = datos.get("esclusas_disponibles", ["Gatun", "Pedro Miguel", "Miraflores"])
+        prioridades = ["alta", "media", "baja"]
+        
+        for i, esclusa in enumerate(esclusas):
+            for prioridad in prioridades:
+                opciones.append({
+                    "asignar": esclusa,
+                    "prioridad": prioridad,
+                    "tiempo": random.randint(20, 60),
+                    "costo": random.randint(500, 2000),
+                    "riesgo": random.uniform(0.1, 0.4),
+                    "co2": random.randint(50, 200)
+                })
+        
+        return opciones
+    
+    def configurar_modo_operativo(self, modo: str) -> Dict:
+        """Configura el modo operativo del sistema"""
+        self.modo_operativo = modo
+        
+        if modo == "autonomo":
+            self.nivel_autonomia = 0.95
+            self.motor_decision.nivel_autonomia = 0.95
+            mensaje = "🤖 Modo autónomo activado - Sistema toma decisiones sin intervención"
+        elif modo == "supervisado":
+            self.nivel_autonomia = 0.5
+            self.motor_decision.nivel_autonomia = 0.5
+            mensaje = "👁️ Modo supervisado - Sistema sugiere, humano decide"
+        else:  # manual
+            self.nivel_autonomia = 0.1
+            self.motor_decision.nivel_autonomia = 0.1
+            mensaje = "🖐️ Modo manual - Control humano total"
+        
+        return {
+            "modo": modo,
+            "nivel_autonomia": self.nivel_autonomia,
+            "mensaje": mensaje
+        }
+
+# ==========================================
+# GENERAR DATOS DE DEMOSTRACIÓN
+# ==========================================
+
+def generar_datos_demostracion():
+    """Genera datos de demostración para el dashboard"""
+    # Simular barcos
+    n = np.random.randint(35, 55)
+    barcos = []
+    for i in range(n):
+        barco = {
+            "nombre": f"B{i+1:04d}",
+            "tipo": np.random.choice(["Portacontenedores", "Granelero", "Petrolero", "Gasero", "Carguero", "Crucero"]),
+            "direccion": "Sur" if np.random.random() < 0.5 else "Norte",
+            "velocidad": np.random.uniform(4, 16),
+            "estado": np.random.choice(["Navegando", "Navegando", "Navegando", "En espera", "Entrando"]),
+            "esclusa": np.random.choice(["Gatun", "Pedro Miguel", "Miraflores"]),
+            "prioridad": np.random.choice(["Alta", "Media", "Baja"], p=[0.15, 0.55, 0.30]),
+            "carga": np.random.uniform(100, 10000)
+        }
+        barcos.append(barco)
+    
+    return pd.DataFrame(barcos)
+
+# ==========================================
+# GENERAR DATOS PARA EL DASHBOARD
 # ==========================================
 
 @st.cache_data(ttl=30)
@@ -602,11 +992,7 @@ def generar_datos():
     np.random.seed(int(time.time() / 30) % 1000)
     n = np.random.randint(35, 55)
     
-    puntos = [
-        (9.36, -79.92), (9.27, -79.92), (9.20, -79.88),
-        (9.015, -79.62), (8.995, -79.585), (8.90, -79.52)
-    ]
-    
+    puntos = [(9.36, -79.92), (9.27, -79.92), (9.20, -79.88), (9.015, -79.62), (8.995, -79.585), (8.90, -79.52)]
     tipos = ["Portacontenedores", "Granelero", "Petrolero", "Gasero", "Carguero", "Crucero", "Remolcador", "Pesquero"]
     estados = ["Navegando", "Navegando", "Navegando", "En espera", "Entrando"]
     esclusas = ["Gatun", "Pedro Miguel", "Miraflores"]
@@ -640,7 +1026,7 @@ def generar_datos():
     return pd.DataFrame(barcos)
 
 # ==========================================
-# ANALISIS
+# ANÁLISIS
 # ==========================================
 
 @st.cache_data(ttl=30)
@@ -740,141 +1126,132 @@ def crear_mapa_mejorado(df):
     return fig
 
 # ==========================================
-# FUNCIÓN PARA GRÁFICO DE EVOLUCIÓN
+# INICIALIZAR SISTEMA
 # ==========================================
 
-def crear_grafico_evolucion(historial):
-    """Crea un gráfico de evolución del tráfico"""
-    if len(historial) > 5:
-        df_hist = pd.DataFrame(historial)
-        if "timestamp" in df_hist.columns and "velocidad" in df_hist.columns:
-            df_hist["timestamp"] = pd.to_datetime(df_hist["timestamp"])
-            fig = px.line(df_hist, x="timestamp", y="velocidad", 
-                         title="Evolución de Velocidad",
-                         labels={"timestamp": "Hora", "velocidad": "Velocidad (nudos)"})
-            fig.update_layout(height=300)
-            return fig
-    return None
+if "sistema_ia" not in st.session_state:
+    st.session_state.sistema_ia = SistemaCompleto()
+    st.session_state.sistema_ia.configurar_modo_operativo("autonomo")
 
-# ==========================================
-# INICIALIZAR - CORREGIDO
-# ==========================================
+sistema = st.session_state.sistema_ia
 
-# Inicializar todas las variables de sesión
-if "anayansi" not in st.session_state:
-    st.session_state.anayansi = AnayansiIA()
-    st.session_state.anayansi.cargar_estado()
-    st.session_state.chat = [{"rol": "anayansi", "msg": "🧠 ¡Hola! Soy **Anayansi**, la sabiduría del mar.\n\n**Soy proactiva** - te mantendré informado automáticamente sobre:\n• 🔴 Alertas de tráfico y congestión\n• 🌤️ Cambios climáticos importantes\n• 💡 Recomendaciones operativas\n• 📊 Análisis automáticos del Canal\n\n**También puedes preguntarme:**\n• ¿Qué barcos están en Miraflores?\n• Predice la congestión\n• Explica el CWT actual"}]
-    st.session_state.df = None
-    st.session_state.stats = None
-    st.session_state.tema = "oscuro"
-    st.session_state.usuario = Usuario("Operador", "admin")
-
-anayansi = st.session_state.anayansi
-
-if st.session_state.df is None:
+if "df" not in st.session_state:
     st.session_state.df = generar_datos()
     st.session_state.stats = analizar(st.session_state.df)
-    st.session_state.nuevos_aprendizajes = anayansi.aprender_automaticamente(st.session_state.df, st.session_state.stats)
 
 df = st.session_state.df
 stats = st.session_state.stats
 
 # ==========================================
-# APLICAR TEMA - CORREGIDO
+# INTERFAZ DE USUARIO
 # ==========================================
 
-aplicar_tema(st.session_state.tema)
+st.markdown("""
+<style>
+    .main-header { font-size: 2.2rem; font-weight: 900; color: #00b4d8; }
+    .sub-header { font-size: 0.9rem; color: #94a3b8; margin-top: -5px; }
+    .metric-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 15px; }
+    .metric-value { font-size: 1.8rem; font-weight: 700; color: white; }
+    .metric-label { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; }
+    .chat-ai { background: rgba(0,150,255,0.1); border-left: 3px solid #00b4d8; padding: 12px; border-radius: 8px; margin: 8px 0; color: #e2e8f0; }
+    .chat-user { background: rgba(15,23,42,0.8); border-left: 3px solid #64748b; padding: 12px; border-radius: 8px; margin: 8px 0; color: #94a3b8; }
+    .insight-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; margin: 8px 0; }
+    .alert-card { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; border-radius: 10px; padding: 12px; margin: 8px 0; }
+    .warning-card { background: rgba(245,158,11,0.1); border: 1px solid #f59e0b; border-radius: 10px; padding: 12px; margin: 8px 0; }
+    .info-card { background: rgba(0,150,255,0.1); border: 1px solid #00b4d8; border-radius: 10px; padding: 12px; margin: 8px 0; }
+    .footer { text-align: center; color: #475569; padding: 15px 0; border-top: 1px solid #1e293b; margin-top: 20px; font-size: 0.7rem; }
+    .decision-card { background: #0f172a; border: 1px solid #00b4d8; border-radius: 10px; padding: 15px; margin: 10px 0; }
+    div.stButton > button { background: #00b4d8; color: white; border-radius: 8px; border: none; padding: 0.4rem 1.2rem; font-weight: 600; }
+    .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 8px 16px; }
+    .stTabs [aria-selected="true"] { background: #00b4d8; color: white; border-radius: 6px; }
+    .esclusa-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
+</style>
+""", unsafe_allow_html=True)
 
 # ==========================================
-# GENERAR ALERTAS Y RECOMENDACIONES PROACTIVAS
+# HEADER PRINCIPAL
 # ==========================================
 
-alertas = anayansi.generar_alertas_proactivas(df, stats)
-recomendaciones = anayansi.generar_recomendaciones(df, stats)
-resumen = anayansi.generar_resumen_proactivo(df, stats)
+st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Sistema de Inteligencia Artificial para Optimización Operativa del Canal de Panamá</div>', unsafe_allow_html=True)
 
 # ==========================================
-# SIDEBAR
+# SIDEBAR - ESTADO DEL SISTEMA
 # ==========================================
 
 with st.sidebar:
     st.markdown("### 🧠 ANAYANSI")
     st.markdown("---")
     
+    # Estado del sistema
+    st.markdown(f"**🤖 Modo:** {sistema.modo_operativo.upper()}")
+    st.markdown(f"**⚡ Autonomía:** {sistema.nivel_autonomia*100:.0f}%")
+    st.markdown(f"**📊 Decisiones:** {sistema.metricas_sistema['decisiones_tomadas']}")
+    st.markdown(f"**🔔 Alertas:** {sistema.metricas_sistema['alertas_generadas']}")
+    
+    st.markdown("---")
+    
+    # Controles del sistema
+    st.markdown("#### 🎮 Control del Sistema")
+    
+    modos = ["autonomo", "supervisado", "manual"]
+    modo_actual = st.selectbox("Modo Operativo", modos, index=modos.index(sistema.modo_operativo))
+    
+    if modo_actual != sistema.modo_operativo:
+        resultado = sistema.configurar_modo_operativo(modo_actual)
+        st.success(resultado["mensaje"])
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # Métricas rápidas
     col1, col2 = st.columns(2)
     col1.metric("🚢", stats["total"])
     col2.metric("⏱️", f"{stats['cwt']:.1f}h")
     
     st.markdown("---")
-    st.caption("🧠 Confianza: " + str(int(anayansi.confianza * 100)) + "%")
-    st.caption("📚 Aprendizaje: " + str(len(anayansi.aprendizaje)) + " registros")
-    st.caption("💬 Memoria: " + str(len(anayansi.memoria_conversaciones)) + " mensajes")
-    st.caption("📈 Precisión: " + str(round(np.mean(anayansi.precision_historica) if anayansi.precision_historica else 0, 2)))
+    st.caption("🧠 Confianza: " + str(int(sistema.motor_decision.nivel_autonomia * 100)) + "%")
     
-    if alertas:
-        st.markdown("---")
-        st.markdown("#### 🔔 Alertas Activas")
-        for alerta in alertas[:2]:
-            st.caption(alerta["nivel"] + " " + alerta["mensaje"][:40] + "...")
-    
-    st.markdown("---")
-    
-    # Tema
-    tema_options = ["oscuro", "claro"]
-    tema_seleccionado = st.selectbox("🎨 Tema", tema_options, index=0 if st.session_state.tema == "oscuro" else 1)
-    if tema_seleccionado != st.session_state.tema:
-        st.session_state.tema = tema_seleccionado
-        st.rerun()
-    
-    # Usuario
-    st.markdown("---")
-    st.caption("👤 Usuario: " + st.session_state.usuario.nombre)
-    st.caption("🔒 Rol: " + st.session_state.usuario.rol)
-    
-    st.markdown("---")
-    
-    if st.button("🔄 Actualizar"):
-        st.cache_data.clear()
-        st.session_state.df = None
-        st.session_state.stats = None
-        st.rerun()
+    if st.button("🔄 Procesar Operación"):
+        with st.spinner("🧠 Procesando..."):
+            datos = {
+                "barcos": stats["total"],
+                "esclusas_disponibles": list(stats["esclusas"].keys()),
+                "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]},
+                "demanda_actual": stats["total"] / 50,
+                "recursos_disponibles": {"remolcadores": 6, "pilotos": 18}
+            }
+            resultado = sistema.procesar_operacion(datos)
+            st.session_state.ultima_operacion = resultado
+            st.success("✅ Operación procesada")
+            st.rerun()
 
 # ==========================================
 # CONTENIDO PRINCIPAL
 # ==========================================
 
-st.markdown('<div class="main-header">🧠 ANAYANSI - IA Proactiva</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Monitoreo inteligente, alertas automáticas y recomendaciones en tiempo real</div>', unsafe_allow_html=True)
-
-# ==========================================
-# ALERTAS PROACTIVAS
-# ==========================================
-
-if alertas:
-    for alerta in alertas:
-        if alerta["tipo"] == "critical":
-            st.markdown(f'<div class="alert-card">🔴 {alerta["nivel"]}: {alerta["mensaje"]}</div>', unsafe_allow_html=True)
-        elif alerta["tipo"] == "warning":
-            st.markdown(f'<div class="warning-card">🟡 {alerta["nivel"]}: {alerta["mensaje"]}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="info-card">ℹ️ {alerta["nivel"]}: {alerta["mensaje"]}</div>', unsafe_allow_html=True)
-
-# ==========================================
-# RECOMENDACIONES
-# ==========================================
-
-if recomendaciones and st.session_state.usuario.tiene_permiso("ver_todo"):
-    with st.expander("💡 Recomendaciones del Sistema", expanded=False):
-        for rec in recomendaciones:
-            st.markdown(f"• {rec}")
-
-# ==========================================
-# RESUMEN PROACTIVO
-# ==========================================
-
-with st.expander("📊 Resumen Automático del Estado", expanded=True):
-    st.markdown(resumen)
+# Mostrar última decisión si existe
+if "ultima_operacion" in st.session_state:
+    resultado = st.session_state.ultima_operacion
+    
+    st.markdown("### 🎯 Última Decisión de la IA")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("🧠 Confianza", f"{resultado['decisiones']['confianza']*100:.0f}%")
+    with col2:
+        st.metric("⚡ Eficiencia", f"{resultado['recursos']['eficiencia']*100:.0f}%")
+    with col3:
+        alerta = resultado['predicciones']['nivel_alerta']
+        st.metric("🔔 Alerta", alerta)
+    
+    st.markdown(f"""
+    <div class="decision-card">
+        <b>📋 Decisión:</b> {resultado['decisiones']['decision']['opcion']['asignar']} - Prioridad {resultado['decisiones']['decision']['opcion']['prioridad']}
+        <br><b>💡 Razonamiento:</b> {resultado['decisiones']['razonamiento']}
+        <br><b>⏱️ Tiempo Estimado:</b> {resultado['decisiones']['decision']['opcion']['tiempo']} minutos
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -893,25 +1270,35 @@ col6.metric("🌊 Oleaje", f"{stats['oleaje']:.1f}m")
 st.markdown("---")
 
 # ==========================================
-# PREDICCIONES
+# PREDICCIONES Y RECOMENDACIONES
 # ==========================================
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("#### 🔮 Predicción de Congestión")
-    predicciones = anayansi.predecir_congestion(df, stats)
-    if predicciones:
-        pred = predicciones[0]
-        st.markdown(f"""
-        <div class="insight-card">
-            <div style="font-size:1.2rem; font-weight:700;">{pred['nivel']}</div>
-            <div>{pred['mensaje']}</div>
-            <div style="margin-top:5px; color:#94a3b8; font-size:0.8rem;">
-                Riesgo: {pred['riesgo']}% | Tendencia: {round(pred['factores'].get('tendencia', 0), 2)}
-            </div>
+    datos_pred = {
+        "barcos": stats["total"],
+        "esclusas_disponibles": list(stats["esclusas"].keys()),
+        "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]}
+    }
+    prediccion = sistema.prediccion.predecir_y_prevenir(datos_pred)
+    
+    nivel_color = {"🟢 Normal": "#10b981", "🟡 Advertencia": "#f59e0b", "🔴 Crítico": "#ef4444"}
+    nivel = prediccion["nivel_alerta"]
+    color = nivel_color.get(nivel, "#94a3b8")
+    
+    st.markdown(f"""
+    <div class="insight-card">
+        <div style="font-size:1.2rem; font-weight:700; color:{color};">{nivel}</div>
+        <div style="margin-top:8px;">
+            <b>Predicciones:</b> {len(prediccion['predicciones'])} eventos detectados
         </div>
-        """, unsafe_allow_html=True)
+        <div style="margin-top:4px; font-size:0.85rem; color:#94a3b8;">
+            {len(prediccion['acciones_preventivas'])} acciones preventivas generadas
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 with col2:
     st.markdown("#### 🌤️ Clima y Mar")
@@ -922,7 +1309,6 @@ with col2:
         <div>🌊 Marea: <strong>{stats['marea']:.1f}m</strong></div>
         <div>📏 Profundidad: <strong>{stats['profundidad']:.1f}m</strong></div>
         <div>🌊 Oleaje: <strong>{stats['oleaje']:.1f}m</strong></div>
-        <div style="margin-top:5px;">📈 {anayansi.analizar_tendencia()}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -953,8 +1339,8 @@ st.markdown("---")
 # PESTAÑAS
 # ==========================================
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "🗺️ Mapa", "📊 Análisis", "💬 Chat IA", "🧠 Aprendizaje", "📋 Datos", "📈 Insights", "⚙️ Configuración"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🗺️ Mapa", "📊 Análisis", "💬 Chat IA", "🧠 Decisiones IA", "📈 Insights", "⚙️ Configuración IA"
 ])
 
 # TAB 1: MAPA
@@ -1014,78 +1400,88 @@ with tab2:
 # TAB 3: CHAT IA
 with tab3:
     st.markdown("### 💬 Chat con Anayansi")
-    st.caption("💡 Pregunta: barcos en Gatun, predice congestion, explica el CWT, clima")
+    st.caption("💡 Pregunta sobre decisiones, predicciones o estado del sistema")
     
-    for msg in st.session_state.chat:
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = [
+            {"rol": "anayansi", "msg": "🧠 ¡Hola! Soy Anayansi, tu IA cognitiva. Puedo tomar decisiones operativas, predecir problemas y optimizar recursos. ¿Qué necesitas saber?"}
+        ]
+    
+    for msg in st.session_state.chat_messages:
         if msg["rol"] == "anayansi":
             st.markdown(f'<div class="chat-ai">🧠 Anayansi: {msg["msg"]}</div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="chat-user">👤 Tú: {msg["msg"]}</div>', unsafe_allow_html=True)
     
-    pregunta = st.text_input("Pregunta a Anayansi:", placeholder="¿Qué barcos están en Miraflores?")
+    pregunta = st.text_input("Pregunta a Anayansi:", placeholder="¿Qué decisión recomiendas para optimizar el tráfico?")
     if pregunta:
-        st.session_state.chat.append({"rol": "usuario", "msg": pregunta})
-        respuesta = anayansi.preguntar(pregunta, df, stats)
-        st.session_state.chat.append({"rol": "anayansi", "msg": respuesta})
-        st.rerun()
-    
-    if st.button("🗑️ Limpiar"):
-        st.session_state.chat = [{"rol": "anayansi", "msg": "🧠 Hola! Soy Anayansi. Soy proactiva: te alerto automáticamente sobre cambios importantes. ¿Qué necesitas saber?"}]
-        st.rerun()
-
-# TAB 4: APRENDIZAJE
-with tab4:
-    st.markdown("### 🧠 Aprendizaje")
-    st.caption("Anayansi aprende automáticamente y guarda todo en memoria")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("📚 Registros", len(anayansi.aprendizaje))
-        st.metric("💬 Memoria", str(len(anayansi.memoria_conversaciones)) + " mensajes")
-        st.metric("🧠 Confianza", str(int(anayansi.confianza * 100)) + "%")
-    with col2:
-        st.markdown("#### 📝 Últimos aprendizajes")
-        if anayansi.aprendizaje:
-            for item in anayansi.aprendizaje[-4:]:
-                st.caption(f"📅 {item['fecha'][:16]}")
-                st.caption(f"📝 {item['texto'][:60]}...")
-                st.markdown("---")
+        st.session_state.chat_messages.append({"rol": "usuario", "msg": pregunta})
+        
+        # Procesar pregunta con la IA
+        if "decisión" in pregunta.lower() or "optimizar" in pregunta.lower():
+            datos = {
+                "barcos": stats["total"],
+                "esclusas_disponibles": list(stats["esclusas"].keys()),
+                "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]},
+                "demanda_actual": stats["total"] / 50
+            }
+            opciones = [
+                {"asignar": "Gatun", "prioridad": "alta", "tiempo": 35, "costo": 1200},
+                {"asignar": "Pedro Miguel", "prioridad": "media", "tiempo": 45, "costo": 800},
+                {"asignar": "Miraflores", "prioridad": "baja", "tiempo": 40, "costo": 950}
+            ]
+            decision = sistema.motor_decision.decidir(datos, opciones)
+            respuesta = f"🎯 **Decisión recomendada:** {decision['decision']['opcion']['asignar']} con prioridad {decision['decision']['opcion']['prioridad']}\n\n💡 {decision['razonamiento']}\n\nConfianza: {decision['confianza']*100:.0f}%"
+        elif "predicción" in pregunta.lower() or "clima" in pregunta.lower():
+            datos_pred = {
+                "barcos": stats["total"],
+                "esclusas_disponibles": list(stats["esclusas"].keys()),
+                "condiciones_climaticas": {"viento": stats["viento"], "oleaje": stats["oleaje"]}
+            }
+            prediccion = sistema.prediccion.predecir_y_prevenir(datos_pred)
+            respuesta = f"🔮 **Predicción:** {prediccion['nivel_alerta']}\n\n📊 {len(prediccion['predicciones'])} eventos detectados\n🛡️ {len(prediccion['acciones_preventivas'])} acciones preventivas"
         else:
-            st.info("Aún no hay registros")
+            respuesta = f"📊 Estado actual del sistema:\n• Barcos: {stats['total']}\n• CWT: {stats['cwt']:.1f}h\n• Modo: {sistema.modo_operativo.upper()}\n• Confianza: {sistema.nivel_autonomia*100:.0f}%"
+        
+        st.session_state.chat_messages.append({"rol": "anayansi", "msg": respuesta})
+        st.rerun()
     
-    st.markdown("---")
-    st.markdown("#### 🧠 Enseñar a Anayansi")
-    nuevo = st.text_area("¿Qué quieres que aprenda?")
-    if st.button("📚 Enseñar") and nuevo:
-        st.success(anayansi.aprender(nuevo))
+    if st.button("🗑️ Limpiar chat"):
+        st.session_state.chat_messages = [
+            {"rol": "anayansi", "msg": "🧠 ¡Hola! Soy Anayansi, tu IA cognitiva. ¿Qué necesitas saber?"}
+        ]
         st.rerun()
 
-# TAB 5: DATOS
-with tab5:
-    st.markdown("### 📋 Datos")
+# TAB 4: DECISIONES IA
+with tab4:
+    st.markdown("### 🧠 Decisiones de la IA")
     
-    display_df = df[["nombre", "direccion", "tipo", "estado", "esclusa", "velocidad", "eta_horas", "prioridad", "eslora", "calado", "carga"]].copy()
-    display_df["velocidad"] = display_df["velocidad"].round(1)
-    display_df["eta_horas"] = display_df["eta_horas"].round(1)
-    display_df["eslora"] = display_df["eslora"].round(0)
-    display_df["calado"] = display_df["calado"].round(1)
-    display_df["carga"] = display_df["carga"].round(0)
-    display_df["direccion"] = display_df["direccion"].apply(lambda x: "⬆️ Norte" if x == "Norte" else "⬇️ Sur")
-    display_df.columns = ["Nombre", "Dir", "Tipo", "Estado", "Esclusa", "Vel", "ETA (h)", "Prioridad", "Eslora (m)", "Calado (m)", "Carga (t)"]
-    
-    st.dataframe(display_df, use_container_width=True)
-    
-    st.markdown("---")
     col1, col2 = st.columns(2)
     with col1:
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 CSV", data=csv, file_name="canal_datos.csv", mime="text/csv")
+        st.metric("📊 Decisiones tomadas", sistema.metricas_sistema["decisiones_tomadas"])
+        st.metric("🎯 Tasa de acierto", f"{sistema.motor_decision.aciertos / max(sistema.motor_decision.decisiones_tomadas, 1) * 100:.1f}%")
     with col2:
-        reporte = anayansi.generar_reporte(df, stats)
-        st.download_button("📄 Reporte IA", data=reporte, file_name="reporte_ia.txt", mime="text/plain")
+        st.metric("⚡ Autonomía", f"{sistema.nivel_autonomia*100:.0f}%")
+        st.metric("🧠 Confianza", f"{sistema.motor_decision.nivel_autonomia*100:.0f}%")
+    
+    st.markdown("---")
+    
+    st.markdown("#### 📋 Historial de Decisiones")
+    if sistema.motor_decision.historial_decisiones:
+        for decision in sistema.motor_decision.historial_decisiones[-5:]:
+            st.markdown(f"""
+            <div style="background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:10px; margin:5px 0;">
+                <b>🕐 {decision['timestamp'][:19]}</b>
+                <br>📋 {decision['decision']['opcion']['asignar']} - Prioridad {decision['decision']['opcion']['prioridad']}
+                <br>💡 {decision['razonamiento'][:100]}...
+                <br>🎯 Confianza: {decision['confianza']*100:.0f}%
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("Aún no hay decisiones registradas. Procesa una operación para comenzar.")
 
-# TAB 6: INSIGHTS
-with tab6:
+# TAB 5: INSIGHTS
+with tab5:
     st.markdown("### 📈 Insights y Patrones")
     
     st.markdown("#### 🔍 Patrones detectados")
@@ -1107,83 +1503,54 @@ with tab6:
     
     st.markdown("---")
     
-    # Gráfico de evolución
-    st.markdown("#### 📈 Evolución de Velocidad")
-    fig_evol = crear_grafico_evolucion(anayansi.historial_barcos)
-    if fig_evol:
-        st.plotly_chart(fig_evol, use_container_width=True)
-    else:
-        st.info("Datos insuficientes para mostrar evolución")
-    
-    st.markdown("---")
-    
-    st.markdown("#### 📊 Estadísticas de IA")
+    st.markdown("#### 📊 Métricas de la IA")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🧠 Confianza", str(int(anayansi.confianza * 100)) + "%")
-    col2.metric("📚 Aprendizajes", len(anayansi.aprendizaje))
-    col3.metric("💬 Interacciones", len(anayansi.memoria_conversaciones))
-    col4.metric("📈 Precisión", str(round(np.mean(anayansi.precision_historica) if anayansi.precision_historica else 0, 2)))
-    
-    st.markdown("---")
-    
-    # Historial de alertas
-    st.markdown("#### 📋 Historial de Alertas")
-    if anayansi.historial_alertas:
-        for alerta in anayansi.historial_alertas[-10:]:
-            st.caption(f"📅 {alerta['timestamp'][:16]} - {alerta['nivel']}: {alerta['mensaje'][:60]}...")
-    else:
-        st.info("No hay alertas registradas")
-    
-    st.markdown("---")
-    st.caption("💡 Anayansi mejora con cada interacción. Mientras más converses, más inteligente se vuelve.")
+    col1.metric("🧠 Confianza", str(int(sistema.nivel_autonomia * 100)) + "%")
+    col2.metric("📚 Decisiones", sistema.metricas_sistema["decisiones_tomadas"])
+    col3.metric("🔔 Alertas", sistema.metricas_sistema["alertas_generadas"])
+    col4.metric("⚡ Eficiencia", f"{sistema.metricas_sistema['optimizaciones_realizadas']}")
 
-# TAB 7: CONFIGURACIÓN
-with tab7:
-    st.markdown("### ⚙️ Configuración")
-    st.markdown("Configuración del sistema Anayansi")
+# TAB 6: CONFIGURACIÓN IA
+with tab6:
+    st.markdown("### ⚙️ Configuración de la IA")
     
-    st.markdown("#### 🎨 Apariencia")
-    tema_options = ["oscuro", "claro"]
-    tema_seleccionado_config = st.selectbox("Tema", tema_options, index=0 if st.session_state.tema == "oscuro" else 1)
-    if tema_seleccionado_config != st.session_state.tema:
-        st.session_state.tema = tema_seleccionado_config
-        st.rerun()
-    
-    st.markdown("#### 🔧 Umbrales de Alertas")
+    st.markdown("#### 🎯 Pesos de Decisión")
     col1, col2 = st.columns(2)
     with col1:
-        umbral_cwt = st.slider("Umbral CWT crítico", 15, 25, 22)
-        umbral_barcos = st.slider("Umbral barcos crítico", 40, 80, 60)
+        st.slider("Seguridad", 0.0, 1.0, sistema.motor_decision.pesos_decision["seguridad"], 0.05, key="peso_seguridad")
+        st.slider("Eficiencia", 0.0, 1.0, sistema.motor_decision.pesos_decision["eficiencia"], 0.05, key="peso_eficiencia")
     with col2:
-        umbral_viento = st.slider("Umbral viento crítico", 20, 40, 30)
-        umbral_espera = st.slider("Umbral espera crítico", 5, 15, 8)
+        st.slider("Costo", 0.0, 1.0, sistema.motor_decision.pesos_decision["costo"], 0.05, key="peso_costo")
+        st.slider("Sostenibilidad", 0.0, 1.0, sistema.motor_decision.pesos_decision["sostenibilidad"], 0.05, key="peso_sostenibilidad")
     
-    st.markdown("#### 💾 Datos")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("💾 Guardar Estado"):
-            anayansi.guardar_estado()
-            st.success("Estado guardado correctamente")
-    with col2:
-        if st.button("📤 Exportar Datos"):
-            json_str = json.dumps({
-                "aprendizaje": anayansi.aprendizaje,
-                "logs": anayansi.logs,
-                "historial_alertas": anayansi.historial_alertas,
-                "confianza": anayansi.confianza
-            }, default=str)
-            st.download_button("📥 Descargar JSON", data=json_str, file_name="anayansi_export.json", mime="application/json")
+    if st.button("💾 Actualizar Pesos"):
+        sistema.motor_decision.pesos_decision = {
+            "seguridad": st.session_state.peso_seguridad,
+            "eficiencia": st.session_state.peso_eficiencia,
+            "costo": st.session_state.peso_costo,
+            "sostenibilidad": st.session_state.peso_sostenibilidad
+        }
+        st.success("✅ Pesos actualizados correctamente")
     
     st.markdown("---")
     
-    st.markdown("#### 👤 Usuario")
-    nombres = ["Operador", "Analista", "Administrador"]
-    nombre_seleccionado = st.selectbox("Nombre de usuario", nombres)
-    roles = ["admin", "operador", "observador"]
-    rol_seleccionado = st.selectbox("Rol", roles)
-    if st.button("👤 Actualizar Usuario"):
-        st.session_state.usuario = Usuario(nombre_seleccionado, rol_seleccionado)
-        st.success(f"Usuario actualizado: {nombre_seleccionado} ({rol_seleccionado})")
+    st.markdown("#### 🎚️ Umbrales Críticos")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.slider("Congestión Máxima", 0.5, 1.0, sistema.motor_decision.umbrales_criticos["congestion_maxima"], 0.05, key="umbral_congestion")
+        st.slider("Tiempo Espera Máx (min)", 30, 180, sistema.motor_decision.umbrales_criticos["tiempo_espera_max"], 10, key="umbral_espera")
+    with col2:
+        st.slider("Velocidad Mínima", 1, 6, sistema.motor_decision.umbrales_criticos["velocidad_minima"], 0.5, key="umbral_velocidad")
+        st.slider("Distancia Seguridad", 0.1, 0.5, sistema.motor_decision.umbrales_criticos["distancia_seguridad"], 0.05, key="umbral_distancia")
+    
+    if st.button("💾 Actualizar Umbrales"):
+        sistema.motor_decision.umbrales_criticos = {
+            "congestion_maxima": st.session_state.umbral_congestion,
+            "tiempo_espera_max": st.session_state.umbral_espera,
+            "velocidad_minima": st.session_state.umbral_velocidad,
+            "distancia_seguridad": st.session_state.umbral_distancia
+        }
+        st.success("✅ Umbrales actualizados correctamente")
 
 # ==========================================
 # FOOTER
@@ -1191,6 +1558,8 @@ with tab7:
 
 st.markdown("""
 <div class="footer">
-    🧠 ANAYANSI - IA Proactiva v2.0 | Alertas automáticas | Recomendaciones inteligentes | Aprendizaje continuo
+    🧠 ANAYANSI - IA Cognitiva v3.0 | Sistema de Optimización Operativa Autónoma
+    <br>
+    <span style="color:#475569;">🤖 Modo: </span><span style="color:#00b4d8;">{}</span>
 </div>
-""", unsafe_allow_html=True)
+""".format(sistema.modo_operativo.upper()), unsafe_allow_html=True)
