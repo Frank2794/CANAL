@@ -206,6 +206,7 @@ class ClienteAIS:
             lon = barco.get('lon', 0)
             speed = barco.get('speed', 0)
             
+            # Determinar dirección según latitud
             if lat > 9.15:
                 direccion = "Sur"
             elif lat < 9.05:
@@ -213,6 +214,8 @@ class ClienteAIS:
             else:
                 direccion = "Navegando"
             
+            # Determinar posición en el Canal
+            posicion = self._determinar_posicion(lat, lon)
             esclusa = self._determinar_esclusa(lat, lon)
             
             barco_formateado = {
@@ -224,12 +227,15 @@ class ClienteAIS:
                 "lon": lon,
                 "velocidad": speed,
                 "estado": "Navegando" if speed > 1 else "En espera",
+                "posicion": posicion,
                 "esclusa": esclusa,
                 "eta_horas": np.random.uniform(0.5, 6),
                 "prioridad": "Media",
                 "eslora": 200,
                 "calado": 10,
                 "carga": 5000,
+                "distancia_recorrida": self._calcular_distancia(lat, lon),
+                "progreso": self._calcular_progreso(lat, lon),
                 "timestamp": datetime.now().isoformat()
             }
             barcos_formateados.append(barco_formateado)
@@ -238,6 +244,23 @@ class ClienteAIS:
             self.ultima_actualizacion = datetime.now()
         
         return barcos_formateados
+    
+    def _determinar_posicion(self, lat, lon):
+        """Determina la posición exacta en el Canal"""
+        if lat > 9.3:
+            return "Entrada Atlántico"
+        elif lat > 9.2:
+            return "Gatún"
+        elif lat > 9.1:
+            return "Lago Gatún"
+        elif lat > 9.0:
+            return "Pedro Miguel"
+        elif lat > 8.95:
+            return "Miraflores"
+        elif lat > 8.9:
+            return "Salida Pacífico"
+        else:
+            return "En tránsito"
     
     def _determinar_esclusa(self, lat, lon):
         if 8.95 < lat < 9.05 and -79.6 < lon < -79.55:
@@ -248,9 +271,190 @@ class ClienteAIS:
             return "Gatun"
         else:
             return "En tránsito"
+    
+    def _calcular_distancia(self, lat, lon):
+        """Calcula distancia aproximada recorrida en el Canal"""
+        # Punto de referencia: entrada Atlántico (9.36, -79.92)
+        lat_ref = 9.36
+        lon_ref = -79.92
+        distancia = np.sqrt((lat - lat_ref)**2 + (lon - lon_ref)**2) * 111
+        return max(0, min(80, distancia))
+    
+    def _calcular_progreso(self, lat, lon):
+        """Calcula el progreso en el Canal (0-100%)"""
+        distancia = self._calcular_distancia(lat, lon)
+        return min(100, (distancia / 80) * 100)
 
 # ==========================================
-# 2. CLIENTE OPENWEATHER
+# 2. SISTEMA DE SEGUIMIENTO DE BARCOS
+# ==========================================
+
+class SistemaSeguimientoBarcos:
+    """Registra el paso de barcos por esclusas y todo su recorrido"""
+    
+    def __init__(self):
+        self.historial_pasos = []
+        self.barcos_en_transito = {}
+        self.barcos_completados = []
+        self.registro_esclusas = defaultdict(list)
+        self.historial_congestion = []
+        self.recorridos_completos = []
+        
+    def registrar_paso_esclusa(self, barco: Dict, esclusa: str, tiempo_espera: float = 0):
+        registro = {
+            "timestamp": datetime.now().isoformat(),
+            "barco": barco["nombre"],
+            "tipo": barco["tipo"],
+            "direccion": barco["direccion"],
+            "esclusa": esclusa,
+            "tiempo_espera": round(tiempo_espera, 1),
+            "velocidad": barco["velocidad"],
+            "posicion": barco.get("posicion", "Desconocida"),
+            "distancia_recorrida": barco.get("distancia_recorrida", 0),
+            "progreso": barco.get("progreso", 0),
+            "distancia_total": 80,
+            "hora": datetime.now().strftime("%H:%M")
+        }
+        self.historial_pasos.append(registro)
+        self.registro_esclusas[esclusa].append(registro)
+        self._registrar_congestion(esclusa, len(self.registro_esclusas[esclusa]))
+        
+        if barco["nombre"] not in self.barcos_en_transito:
+            self.barcos_en_transito[barco["nombre"]] = {
+                "barco": barco,
+                "esclusas_pasadas": [],
+                "inicio": datetime.now().isoformat(),
+                "posiciones": [{
+                    "timestamp": datetime.now().isoformat(),
+                    "lat": barco["lat"],
+                    "lon": barco["lon"],
+                    "posicion": barco.get("posicion", "Desconocida"),
+                    "progreso": barco.get("progreso", 0)
+                }]
+            }
+        
+        self.barcos_en_transito[barco["nombre"]]["esclusas_pasadas"].append({
+            "esclusa": esclusa,
+            "timestamp": datetime.now().isoformat(),
+            "tiempo_espera": tiempo_espera
+        })
+        
+        # Actualizar posición
+        self.barcos_en_transito[barco["nombre"]]["posiciones"].append({
+            "timestamp": datetime.now().isoformat(),
+            "lat": barco["lat"],
+            "lon": barco["lon"],
+            "posicion": barco.get("posicion", "Desconocida"),
+            "progreso": barco.get("progreso", 0)
+        })
+        
+        return registro
+    
+    def _registrar_congestion(self, esclusa: str, barcos_esperando: int):
+        self.historial_congestion.append({
+            "timestamp": datetime.now().isoformat(),
+            "esclusa": esclusa,
+            "barcos_esperando": barcos_esperando,
+            "nivel": "🟢 Bajo" if barcos_esperando < 5 else "🟡 Medio" if barcos_esperando < 10 else "🔴 Alto"
+        })
+    
+    def registrar_salida_canal(self, barco: Dict, distancia_final: float):
+        if barco["nombre"] in self.barcos_en_transito:
+            # Registrar recorrido completo
+            recorrido = {
+                "timestamp": datetime.now().isoformat(),
+                "barco": barco["nombre"],
+                "tipo": barco["tipo"],
+                "direccion": barco["direccion"],
+                "distancia_recorrida": distancia_final,
+                "distancia_total": 80,
+                "tiempo_total": self._calcular_tiempo_total(barco["nombre"]),
+                "esclusas_pasadas": self.barcos_en_transito[barco["nombre"]]["esclusas_pasadas"],
+                "posiciones": self.barcos_en_transito[barco["nombre"]]["posiciones"]
+            }
+            self.recorridos_completos.append(recorrido)
+            
+            registro = {
+                "timestamp": datetime.now().isoformat(),
+                "barco": barco["nombre"],
+                "distancia_recorrida": distancia_final,
+                "distancia_total": 80,
+                "tiempo_total": self._calcular_tiempo_total(barco["nombre"])
+            }
+            self.barcos_completados.append(registro)
+            self.barcos_en_transito.pop(barco["nombre"], None)
+            return registro
+        return None
+    
+    def _calcular_tiempo_total(self, nombre_barco):
+        if nombre_barco in self.barcos_en_transito:
+            inicio = datetime.fromisoformat(self.barcos_en_transito[nombre_barco]["inicio"])
+            ahora = datetime.now()
+            return round((ahora - inicio).total_seconds() / 60, 1)
+        return 0
+    
+    def obtener_estado_barco(self, nombre_barco):
+        if nombre_barco in self.barcos_en_transito:
+            datos = self.barcos_en_transito[nombre_barco]
+            esclusas_pasadas = len(datos["esclusas_pasadas"])
+            ultima_esclusa = datos["esclusas_pasadas"][-1]["esclusa"] if esclusas_pasadas > 0 else "Ninguna"
+            ultima_posicion = datos["posiciones"][-1] if datos["posiciones"] else {}
+            progreso = ultima_posicion.get("progreso", 0)
+            
+            return {
+                "estado": "En tránsito",
+                "progreso": round(progreso, 1),
+                "esclusas_pasadas": esclusas_pasadas,
+                "ultima_esclusa": ultima_esclusa,
+                "ultima_posicion": ultima_posicion.get("posicion", "Desconocida"),
+                "tiempo_total": self._calcular_tiempo_total(nombre_barco),
+                "distancia_recorrida": ultima_posicion.get("distancia_recorrida", 0)
+            }
+        else:
+            for completado in self.barcos_completados:
+                if completado["barco"] == nombre_barco:
+                    return {
+                        "estado": "✅ Completado",
+                        "progreso": 100,
+                        "distancia_recorrida": completado["distancia_recorrida"],
+                        "tiempo_total": completado["tiempo_total"]
+                    }
+            return {"estado": "No encontrado"}
+    
+    def obtener_recorrido_barco(self, nombre_barco):
+        """Obtiene el recorrido completo de un barco"""
+        if nombre_barco in self.barcos_en_transito:
+            return self.barcos_en_transito[nombre_barco]["posiciones"]
+        
+        for recorrido in self.recorridos_completos:
+            if recorrido["barco"] == nombre_barco:
+                return recorrido["posiciones"]
+        
+        return []
+    
+    def obtener_estadisticas_esclusa(self, esclusa):
+        if esclusa in self.registro_esclusas:
+            registros = self.registro_esclusas[esclusa]
+            if registros:
+                tiempos_espera = [r["tiempo_espera"] for r in registros]
+                return {
+                    "total_barcos": len(registros),
+                    "tiempo_espera_promedio": round(sum(tiempos_espera) / len(tiempos_espera), 1),
+                    "tiempo_espera_max": round(max(tiempos_espera), 1),
+                    "tiempo_espera_min": round(min(tiempos_espera), 1),
+                    "ultimos_pasos": registros[-5:]
+                }
+        return None
+    
+    def obtener_datos_congestion(self):
+        if not self.historial_congestion:
+            return pd.DataFrame()
+        df = pd.DataFrame(self.historial_congestion)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        return df
+
+# ==========================================
+# 3. CLIENTE OPENWEATHER
 # ==========================================
 
 class ClienteOpenWeather:
@@ -327,7 +531,7 @@ class ClienteOpenWeather:
             return "🔴 Restricciones posibles"
 
 # ==========================================
-# 3. SISTEMA DE DATOS REALES
+# 4. SISTEMA DE DATOS REALES
 # ==========================================
 
 class SistemaDatosReales:
@@ -376,137 +580,16 @@ class SistemaDatosReales:
         return estado
 
 # ==========================================
-# 4. SISTEMA DE SEGUIMIENTO DE BARCOS
-# ==========================================
-
-class SistemaSeguimientoBarcos:
-    """Registra el paso de barcos por esclusas"""
-    
-    def __init__(self):
-        self.historial_pasos = []
-        self.barcos_en_transito = {}
-        self.barcos_completados = []
-        self.registro_esclusas = defaultdict(list)
-        self.historial_congestion = []
-        
-    def registrar_paso_esclusa(self, barco: Dict, esclusa: str, tiempo_espera: float = 0):
-        registro = {
-            "timestamp": datetime.now().isoformat(),
-            "barco": barco["nombre"],
-            "tipo": barco["tipo"],
-            "direccion": barco["direccion"],
-            "esclusa": esclusa,
-            "tiempo_espera": round(tiempo_espera, 1),
-            "velocidad": barco["velocidad"],
-            "distancia_recorrida": barco.get("distancia_recorrida", 0),
-            "distancia_total": 80,
-            "hora": datetime.now().strftime("%H:%M")
-        }
-        self.historial_pasos.append(registro)
-        self.registro_esclusas[esclusa].append(registro)
-        self._registrar_congestion(esclusa, len(self.registro_esclusas[esclusa]))
-        
-        if barco["nombre"] not in self.barcos_en_transito:
-            self.barcos_en_transito[barco["nombre"]] = {
-                "barco": barco,
-                "esclusas_pasadas": [],
-                "inicio": datetime.now().isoformat()
-            }
-        
-        self.barcos_en_transito[barco["nombre"]]["esclusas_pasadas"].append({
-            "esclusa": esclusa,
-            "timestamp": datetime.now().isoformat(),
-            "tiempo_espera": tiempo_espera
-        })
-        
-        return registro
-    
-    def _registrar_congestion(self, esclusa: str, barcos_esperando: int):
-        self.historial_congestion.append({
-            "timestamp": datetime.now().isoformat(),
-            "esclusa": esclusa,
-            "barcos_esperando": barcos_esperando,
-            "nivel": "🟢 Bajo" if barcos_esperando < 5 else "🟡 Medio" if barcos_esperando < 10 else "🔴 Alto"
-        })
-    
-    def registrar_salida_canal(self, barco: Dict, distancia_final: float):
-        if barco["nombre"] in self.barcos_en_transito:
-            registro = {
-                "timestamp": datetime.now().isoformat(),
-                "barco": barco["nombre"],
-                "distancia_recorrida": distancia_final,
-                "distancia_total": 80,
-                "tiempo_total": self._calcular_tiempo_total(barco["nombre"])
-            }
-            self.barcos_completados.append(registro)
-            self.barcos_en_transito.pop(barco["nombre"], None)
-            return registro
-        return None
-    
-    def _calcular_tiempo_total(self, nombre_barco):
-        if nombre_barco in self.barcos_en_transito:
-            inicio = datetime.fromisoformat(self.barcos_en_transito[nombre_barco]["inicio"])
-            ahora = datetime.now()
-            return round((ahora - inicio).total_seconds() / 60, 1)
-        return 0
-    
-    def obtener_estado_barco(self, nombre_barco):
-        if nombre_barco in self.barcos_en_transito:
-            datos = self.barcos_en_transito[nombre_barco]
-            esclusas_pasadas = len(datos["esclusas_pasadas"])
-            ultima_esclusa = datos["esclusas_pasadas"][-1]["esclusa"] if esclusas_pasadas > 0 else "Ninguna"
-            progreso = (esclusas_pasadas / 3) * 100
-            return {
-                "estado": "En tránsito",
-                "progreso": round(progreso, 1),
-                "esclusas_pasadas": esclusas_pasadas,
-                "ultima_esclusa": ultima_esclusa,
-                "tiempo_total": self._calcular_tiempo_total(nombre_barco),
-                "distancia_recorrida": datos["barco"].get("distancia_recorrida", 0)
-            }
-        else:
-            for completado in self.barcos_completados:
-                if completado["barco"] == nombre_barco:
-                    return {
-                        "estado": "✅ Completado",
-                        "progreso": 100,
-                        "distancia_recorrida": completado["distancia_recorrida"],
-                        "tiempo_total": completado["tiempo_total"]
-                    }
-            return {"estado": "No encontrado"}
-    
-    def obtener_estadisticas_esclusa(self, esclusa):
-        if esclusa in self.registro_esclusas:
-            registros = self.registro_esclusas[esclusa]
-            if registros:
-                tiempos_espera = [r["tiempo_espera"] for r in registros]
-                return {
-                    "total_barcos": len(registros),
-                    "tiempo_espera_promedio": round(sum(tiempos_espera) / len(tiempos_espera), 1),
-                    "tiempo_espera_max": round(max(tiempos_espera), 1),
-                    "tiempo_espera_min": round(min(tiempos_espera), 1),
-                    "ultimos_pasos": registros[-5:]
-                }
-        return None
-    
-    def obtener_datos_congestion(self):
-        if not self.historial_congestion:
-            return pd.DataFrame()
-        df = pd.DataFrame(self.historial_congestion)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        return df
-
-# ==========================================
-# 5. SISTEMA DE TIEMPO REAL
+# 5. SISTEMA DE TIEMPO REAL (60 SEGUNDOS)
 # ==========================================
 
 class SistemaTiempoReal:
-    """Sistema de actualización automática en tiempo real"""
+    """Sistema de actualización automática en tiempo real - 60 segundos"""
     
     def __init__(self):
         self.ultima_actualizacion = None
         self.proxima_actualizacion = None
-        self.intervalo_segundos = 15
+        self.intervalo_segundos = 60  # 1 minuto
         self.actualizando = False
         self.historial_actualizaciones = []
         self.errores_actualizacion = []
@@ -521,7 +604,7 @@ class SistemaTiempoReal:
         self.ejecutando = True
         self.thread_actualizacion = threading.Thread(target=self._loop_actualizacion, daemon=True)
         self.thread_actualizacion.start()
-        logger.info("🔄 Sistema de tiempo real iniciado (15s)")
+        logger.info("🔄 Sistema de tiempo real iniciado (60s)")
         
     def _loop_actualizacion(self):
         """Loop principal de actualización"""
@@ -555,15 +638,16 @@ class SistemaTiempoReal:
                 nuevos_aprendizajes = st.session_state.anayansi.aprender_automaticamente(df_actual, stats_actuales)
                 st.session_state.nuevos_aprendizajes = nuevos_aprendizajes
             
+            # Actualizar seguimiento con los barcos en tránsito
             if len(df_actual) > 0 and 'sistema_seguimiento' in st.session_state:
-                barcos_muestra = df_actual.sample(min(3, len(df_actual)))
-                for _, barco in barcos_muestra.iterrows():
-                    esclusa = barco.get('esclusa', random.choice(['Gatun', 'Pedro Miguel', 'Miraflores']))
-                    st.session_state.sistema_seguimiento.registrar_paso_esclusa(
-                        barco.to_dict(),
-                        esclusa,
-                        random.uniform(0.5, 2.0)
-                    )
+                for _, barco in df_actual.iterrows():
+                    # Solo registrar barcos que están en esclusas
+                    if barco.get('esclusa', '') in ['Gatun', 'Pedro Miguel', 'Miraflores']:
+                        st.session_state.sistema_seguimiento.registrar_paso_esclusa(
+                            barco.to_dict(),
+                            barco.get('esclusa', ''),
+                            random.uniform(0.5, 2.0)
+                        )
             
             self._guardar_historico(df_actual, stats_actuales)
             
@@ -716,6 +800,7 @@ def crear_grafico_progreso_barcos(sistema_seguimiento):
             data.append({
                 "Barco": nombre,
                 "Progreso (%)": estado["progreso"],
+                "Posición": estado.get("ultima_posicion", "Desconocida"),
                 "Tiempo (min)": estado["tiempo_total"]
             })
         
@@ -733,6 +818,37 @@ def crear_grafico_progreso_barcos(sistema_seguimiento):
             fig.update_layout(height=300)
             return fig
     return None
+
+def crear_grafico_recorrido_barco(posiciones):
+    """Crea un gráfico del recorrido de un barco en el Canal"""
+    if not posiciones:
+        return None
+    
+    df = pd.DataFrame(posiciones)
+    if len(df) < 2:
+        return None
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=pd.to_datetime(df["timestamp"]),
+        y=df["progreso"],
+        mode='lines+markers',
+        name='Progreso',
+        line=dict(color='#00b4d8', width=2),
+        marker=dict(size=8)
+    ))
+    
+    fig.update_layout(
+        title="📊 Recorrido del Barco en el Canal",
+        xaxis_title="Tiempo",
+        yaxis_title="Progreso (%)",
+        height=300,
+        template="plotly_dark",
+        hovermode="x unified"
+    )
+    
+    return fig
 
 def crear_grafico_tiempo_real():
     """Crea un gráfico de evolución en tiempo real"""
@@ -771,7 +887,7 @@ def crear_grafico_tiempo_real():
         ))
         
         fig.update_layout(
-            title="📊 Evolución en Tiempo Real",
+            title="📊 Evolución en Tiempo Real (60s)",
             xaxis_title="Hora",
             yaxis_title="CWT (horas)",
             yaxis2=dict(
@@ -816,9 +932,13 @@ def generar_barcos_simulados(n):
     estados = ["Navegando", "Navegando", "Navegando", "En espera", "Entrando"]
     esclusas = ["Gatun", "Pedro Miguel", "Miraflores"]
     prioridades = ["Alta", "Media", "Baja"]
+    posiciones = ["Entrada Atlántico", "Gatún", "Lago Gatún", "Pedro Miguel", "Miraflores", "Salida Pacífico"]
     
     barcos = []
     for i in range(n):
+        progreso = np.random.uniform(0, 100)
+        pos_idx = int((progreso / 100) * (len(posiciones) - 1))
+        
         barco = {
             "nombre": f"BARCO_{i+1:04d}",
             "tipo": random.choice(tipos),
@@ -828,11 +948,14 @@ def generar_barcos_simulados(n):
             "velocidad": np.random.uniform(4, 16) if random.random() < 0.7 else np.random.uniform(0, 3),
             "estado": random.choice(estados),
             "esclusa": random.choice(esclusas),
+            "posicion": random.choice(posiciones),
             "eta_horas": np.random.uniform(0.5, 8),
             "prioridad": random.choice(prioridades),
             "eslora": np.random.uniform(80, 400),
             "calado": np.random.uniform(8, 18),
             "carga": np.random.uniform(100, 10000),
+            "distancia_recorrida": progreso * 0.8,
+            "progreso": progreso,
             "timestamp": datetime.now().isoformat()
         }
         barcos.append(barco)
@@ -853,6 +976,8 @@ def analizar(df):
         "velocidad_prom": df["velocidad"].mean(),
         "esclusas": {},
         "tipos": df["tipo"].value_counts().to_dict(),
+        "posiciones": df["posicion"].value_counts().to_dict() if "posicion" in df.columns else {},
+        "progreso_prom": df["progreso"].mean() if "progreso" in df.columns else 0,
         "temp": 25 + np.random.normal(0, 2),
         "viento": np.random.uniform(5, 25),
         "humedad": 70 + np.random.normal(0, 8),
@@ -895,6 +1020,8 @@ def crear_mapa_mejorado(df):
             "estado": True,
             "velocidad": ":.1f",
             "esclusa": True,
+            "posicion": True,
+            "progreso": ":.1f",
             "eta_horas": ":.1f",
             "prioridad": True,
             "eslora": True,
@@ -971,7 +1098,7 @@ def mostrar_indicador_datos_reales():
             st.rerun()
 
 def mostrar_indicador_tiempo_real():
-    """Muestra el estado de actualización en tiempo real"""
+    """Muestra el estado de actualización en tiempo real (60s)"""
     sistema = st.session_state.sistema_tiempo_real
     
     st.markdown("---")
@@ -1045,9 +1172,9 @@ def mostrar_grafico_tiempo_real():
 def simular_paso_barcos(df, sistema_seguimiento):
     """Simula el paso de barcos por esclusas para demostración"""
     if isinstance(df, pd.DataFrame):
-        barcos_aleatorios = df.sample(min(3, len(df)))
+        barcos_aleatorios = df.sample(min(5, len(df)))
     else:
-        barcos_aleatorios = df[:3]
+        barcos_aleatorios = df[:5]
     
     for _, barco in barcos_aleatorios.iterrows() if isinstance(df, pd.DataFrame) else enumerate(barcos_aleatorios):
         if isinstance(barco, pd.Series):
@@ -1066,6 +1193,7 @@ def simular_paso_barcos(df, sistema_seguimiento):
         
         distancia = random.uniform(10, 70)
         barco_dict["distancia_recorrida"] = distancia
+        barco_dict["progreso"] = (distancia / 80) * 100
         
         if distancia > 70:
             sistema_seguimiento.registrar_salida_canal(barco_dict, distancia)
@@ -1145,9 +1273,8 @@ with st.sidebar:
 st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Sistema de Inteligencia Artificial para Optimización Operativa del Canal de Panamá</div>', unsafe_allow_html=True)
 
-# Mostrar última actualización
 if 'ultima_actualizacion' in st.session_state:
-    st.caption(f"🔄 Datos actualizados en tiempo real - Última: {st.session_state.ultima_actualizacion.strftime('%H:%M:%S')}")
+    st.caption(f"🔄 Datos actualizados cada 60 segundos - Última: {st.session_state.ultima_actualizacion.strftime('%H:%M:%S')}")
 
 st.markdown("---")
 
@@ -1155,7 +1282,7 @@ st.markdown("---")
 # KPIS
 # ==========================================
 
-col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
 col1.metric("🚢 Barcos", stats["total"])
 col2.metric("⏱️ CWT", f"{stats['cwt']:.1f}h")
 col3.metric("📈 Vel.", f"{stats['velocidad_prom']:.1f}")
@@ -1163,6 +1290,7 @@ col4.metric("⏳ Espera", stats["espera"])
 col5.metric("⭐ Alta", stats["prioridad_alta"])
 col6.metric("⬆️ Norte", stats["norte"])
 col7.metric("⬇️ Sur", stats["sur"])
+col8.metric("📊 Progreso", f"{stats.get('progreso_prom', 0):.0f}%")
 
 st.markdown("---")
 
@@ -1178,7 +1306,7 @@ st.markdown("---")
 # GRÁFICO EN TIEMPO REAL
 # ==========================================
 
-st.markdown("### 📊 Evolución en Tiempo Real")
+st.markdown("### 📊 Evolución en Tiempo Real (60s)")
 mostrar_grafico_tiempo_real()
 
 st.markdown("---")
@@ -1239,7 +1367,7 @@ st.markdown("---")
 # PESTAÑAS
 # ==========================================
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "🗺️ Mapa",
     "📊 Análisis",
     "💬 Chat IA",
@@ -1247,7 +1375,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📈 Insights",
     "⚙️ Configuración IA",
     "📋 Datos Completos",
-    "🚢 Seguimiento"
+    "🚢 Seguimiento",
+    "📍 Recorridos"
 ])
 
 # ==========================================
@@ -1263,13 +1392,15 @@ with tab1:
     
     st.markdown("---")
     st.markdown("#### 📊 Resumen del Mapa")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📍 Barcos en el mapa", stats["total"])
     with col2:
         st.metric("⚙️ Esclusas activas", len(stats["esclusas"]))
     with col3:
         st.metric("🔴 Prioridad Alta", stats["prioridad_alta"])
+    with col4:
+        st.metric("📊 Progreso promedio", f"{stats.get('progreso_prom', 0):.0f}%")
 
 # ==========================================
 # TAB 2: ANÁLISIS
@@ -1320,7 +1451,7 @@ with tab3:
     
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = [
-            {"rol": "anayansi", "msg": "🧠 ¡Hola! Soy Anayansi, tu IA cognitiva. Puedo responder preguntas sobre el Canal, barcos, esclusas y clima. ¿Qué necesitas saber?"}
+            {"rol": "anayansi", "msg": "🧠 ¡Hola! Soy Anayansi, tu IA cognitiva. Puedo responder preguntas sobre el Canal, barcos, esclusas, recorridos y clima. ¿Qué necesitas saber?"}
         ]
     
     for msg in st.session_state.chat_messages:
@@ -1347,6 +1478,11 @@ with tab3:
             respuesta = "⚙️ **Estado de esclusas:**\n"
             for nombre, datos in stats["esclusas"].items():
                 respuesta += f"• {nombre}: {datos['total']} barcos, {datos['espera']} en espera\n"
+        elif "recorrido" in pregunta.lower() or "progreso" in pregunta.lower():
+            respuesta = f"📊 **Progreso promedio de barcos:** {stats.get('progreso_prom', 0):.0f}%\n"
+            if "posiciones" in stats:
+                for pos, count in stats["posiciones"].items():
+                    respuesta += f"• {pos}: {count} barcos\n"
         else:
             respuesta = f"📊 El Canal tiene **{stats['total']} barcos** con CWT de **{stats['cwt']:.1f}h**. ¿Necesitas más información?"
         
@@ -1416,7 +1552,7 @@ with tab5:
     col1.metric("🚢 Barcos", stats["total"])
     col2.metric("⏱️ CWT", f"{stats['cwt']:.1f}h")
     col3.metric("📈 Velocidad", f"{stats['velocidad_prom']:.1f}")
-    col4.metric("⏳ Espera", stats["espera"])
+    col4.metric("📊 Progreso", f"{stats.get('progreso_prom', 0):.0f}%")
 
 # ==========================================
 # TAB 6: CONFIGURACIÓN IA
@@ -1450,7 +1586,7 @@ with tab6:
     
     st.markdown("---")
     st.markdown("#### ⏱️ Intervalo de Actualización")
-    intervalo = st.selectbox("Intervalo (segundos)", [5, 10, 15, 30, 60], index=2)
+    intervalo = st.selectbox("Intervalo (segundos)", [15, 30, 60, 120, 300], index=2)
     if intervalo != sistema_tiempo_real.intervalo_segundos:
         sistema_tiempo_real.intervalo_segundos = intervalo
         st.success(f"✅ Intervalo actualizado a {intervalo}s")
@@ -1463,14 +1599,15 @@ with tab7:
     st.markdown("### 📋 Datos Completos de Barcos")
     st.caption("Información detallada de todos los barcos activos en el Canal")
     
-    display_df = df[["nombre", "direccion", "tipo", "estado", "esclusa", "velocidad", "eta_horas", "prioridad", "eslora", "calado", "carga"]].copy()
+    display_df = df[["nombre", "direccion", "tipo", "estado", "esclusa", "posicion", "progreso", "velocidad", "eta_horas", "prioridad", "eslora", "calado", "carga"]].copy()
     display_df["velocidad"] = display_df["velocidad"].round(1)
     display_df["eta_horas"] = display_df["eta_horas"].round(1)
     display_df["eslora"] = display_df["eslora"].round(0)
     display_df["calado"] = display_df["calado"].round(1)
     display_df["carga"] = display_df["carga"].round(0)
+    display_df["progreso"] = display_df["progreso"].round(1)
     display_df["direccion"] = display_df["direccion"].apply(lambda x: "⬆️ Norte" if x == "Norte" else "⬇️ Sur")
-    display_df.columns = ["Nombre", "Dirección", "Tipo", "Estado", "Esclusa", "Velocidad", "ETA (h)", "Prioridad", "Eslora (m)", "Calado (m)", "Carga (t)"]
+    display_df.columns = ["Nombre", "Dirección", "Tipo", "Estado", "Esclusa", "Posición", "Progreso (%)", "Velocidad", "ETA (h)", "Prioridad", "Eslora (m)", "Calado (m)", "Carga (t)"]
     
     st.dataframe(display_df, use_container_width=True)
     
@@ -1550,6 +1687,7 @@ with tab8:
             data.append({
                 "Barco": nombre,
                 "Progreso": f"{estado['progreso']:.0f}%",
+                "Posición": estado.get("ultima_posicion", "Desconocida"),
                 "Esclusas": estado["esclusas_pasadas"],
                 "Última": estado["ultima_esclusa"],
                 "Tiempo (min)": estado["tiempo_total"]
@@ -1587,12 +1725,59 @@ with tab8:
                 """, unsafe_allow_html=True)
 
 # ==========================================
+# TAB 9: RECORRIDOS DE BARCOS
+# ==========================================
+
+with tab9:
+    st.markdown("### 📍 Recorridos de Barcos en el Canal")
+    st.caption("Seguimiento completo del movimiento de barcos dentro del Canal")
+    
+    # Seleccionar barco
+    barcos_disponibles = list(sistema_seguimiento.barcos_en_transito.keys()) + [r["barco"] for r in sistema_seguimiento.recorridos_completos[-10:]]
+    
+    if barcos_disponibles:
+        barco_seleccionado = st.selectbox("Seleccionar Barco", barcos_disponibles)
+        
+        if barco_seleccionado:
+            posiciones = sistema_seguimiento.obtener_recorrido_barco(barco_seleccionado)
+            estado = sistema_seguimiento.obtener_estado_barco(barco_seleccionado)
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📊 Progreso", f"{estado.get('progreso', 0):.0f}%")
+            with col2:
+                st.metric("📍 Posición", estado.get("ultima_posicion", "Desconocida"))
+            with col3:
+                st.metric("⏱️ Tiempo", f"{estado.get('tiempo_total', 0):.0f} min")
+            
+            st.markdown("---")
+            
+            # Gráfico del recorrido
+            fig_recorrido = crear_grafico_recorrido_barco(posiciones)
+            if fig_recorrido:
+                st.plotly_chart(fig_recorrido, use_container_width=True)
+            else:
+                st.info("⏳ No hay suficientes datos de recorrido para este barco")
+            
+            # Tabla de posiciones
+            if posiciones:
+                st.markdown("#### 📋 Historial de Posiciones")
+                df_pos = pd.DataFrame(posiciones)
+                df_pos["timestamp"] = pd.to_datetime(df_pos["timestamp"])
+                df_pos["hora"] = df_pos["timestamp"].dt.strftime("%H:%M:%S")
+                display_pos = df_pos[["hora", "posicion", "progreso", "lat", "lon"]].copy()
+                display_pos.columns = ["Hora", "Posición", "Progreso (%)", "Latitud", "Longitud"]
+                st.dataframe(display_pos, use_container_width=True)
+    else:
+        st.info("🚢 No hay barcos en tránsito aún. Simula pasos para ver recorridos.")
+
+# ==========================================
 # FOOTER
 # ==========================================
 
 st.markdown("""
 <div class="footer">
-    🧠 ANAYANSI - IA Cognitiva | Datos en tiempo real cada 15s
+    🧠 ANAYANSI - IA Cognitiva | Datos en tiempo real cada 60s
     <br>
     <span style="color:#475569;">🚢 Barcos: {} | 📡 AISStream WebSocket + OpenWeather</span>
     <br>
