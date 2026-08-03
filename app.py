@@ -991,17 +991,25 @@ def analizar(df):
     return stats
 
 # ==========================================
-# 9. FUNCIONES PARA MAPA MEJORADO (2D Y 3D)
+# 9. FUNCIONES PARA MAPA MEJORADO (2D Y 3D) - CORREGIDAS
 # ==========================================
 
 def crear_mapa_2d(df, estilo):
-    """Crea mapa 2D con diferentes estilos"""
+    """Crea mapa 2D con diferentes estilos - CORREGIDO"""
     estilos_map = {
         "🌍 Satélite": "satellite-streets",
         "🏙️ Calles": "carto-positron",
         "🌄 Relieve": "outdoors",
         "🌃 Nocturno": "dark"
     }
+    
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title="No hay datos para mostrar en el mapa",
+            height=550
+        )
+        return fig
     
     fig = px.scatter_mapbox(
         df,
@@ -1028,7 +1036,7 @@ def crear_mapa_2d(df, estilo):
         title="📍 Navegación en el Canal de Panamá"
     )
     
-    # Agregar esclusas
+    # Agregar esclusas con add_scattermapbox
     esclusas_coords = {
         "Gatún": {"lat": 9.27, "lon": -79.92, "color": "#ef4444"},
         "Pedro Miguel": {"lat": 9.015, "lon": -79.62, "color": "#f59e0b"},
@@ -1036,19 +1044,14 @@ def crear_mapa_2d(df, estilo):
     }
     
     for nombre, coords in esclusas_coords.items():
-        fig.add_trace(
-            go.Scattermapbox(
-                lat=[coords["lat"]],
-                lon=[coords["lon"]],
-                mode="markers+text",
-                marker=dict(size=25, color=coords["color"], symbol="triangle-up", line=dict(width=2, color="white")),
-                text=[f"⚙️ {nombre}"],
-                textposition="bottom center",
-                textfont=dict(color="white", size=10),
-                name=f"⚙️ {nombre}",
-                hoverinfo="text",
-                hovertext=[f"<b>⚙️ Esclusa de {nombre}</b>"]
-            )
+        fig.add_scattermapbox(
+            lat=[coords["lat"]],
+            lon=[coords["lon"]],
+            mode="markers",
+            marker=dict(size=20, color=coords["color"], symbol="triangle-up"),
+            name=f"⚙️ {nombre}",
+            hoverinfo="text",
+            hovertext=[f"<b>⚙️ Esclusa de {nombre}</b>"]
         )
     
     fig.update_layout(
@@ -1058,40 +1061,53 @@ def crear_mapa_2d(df, estilo):
             zoom=9.5
         ),
         margin=dict(r=0, t=30, l=0, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hoverlabel=dict(bgcolor="white", font_size=12)
     )
     
     return fig
 
 def crear_mapa_3d(df):
-    """Crea mapa 3D con relieve"""
+    """Crea mapa 3D con relieve - CORREGIDO"""
+    
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No hay datos para mostrar en 3D", height=550)
+        return fig
+    
+    color_map = {"Alta": "#ef4444", "Media": "#f59e0b", "Baja": "#10b981"}
+    colores = df["prioridad"].map(color_map).fillna("#94a3b8")
+    
     fig = go.Figure()
     
-    # Barcos en 3D
     fig.add_trace(go.Scatter3d(
         x=df["lon"],
         y=df["lat"],
         z=df["velocidad"] * 0.3,
-        mode="markers+text",
+        mode="markers",
         marker=dict(
-            size=df["velocidad"] * 1.5,
-            color=df["prioridad"].map({"Alta": "#ef4444", "Media": "#f59e0b", "Baja": "#10b981"}),
+            size=df["velocidad"] * 1.2 + 4,
+            color=colores,
             symbol="circle",
-            opacity=0.8
+            opacity=0.8,
+            line=dict(width=1, color="white")
         ),
         text=df["nombre"],
-        textposition="top center",
-        hoverinfo="text",
-        hovertext=[
-            f"<b>{row['nombre']}</b><br>"
-            f"Velocidad: {row['velocidad']:.1f} nudos<br>"
-            f"Progreso: {row['progreso']:.0f}%"
-            for _, row in df.iterrows()
-        ],
+        hovertemplate=
+            "<b>%{text}</b><br>" +
+            "Velocidad: %{customdata[0]:.1f} nudos<br>" +
+            "Progreso: %{customdata[1]:.0f}%<br>" +
+            "Posición: %{customdata[2]}<br>" +
+            "Prioridad: %{customdata[3]}<extra></extra>",
+        customdata=np.column_stack([
+            df["velocidad"],
+            df["progreso"],
+            df["posicion"],
+            df["prioridad"]
+        ]),
         name="Barcos"
     ))
     
-    # Esclusas en 3D
     esclusas_coords = {
         "Gatún": {"lat": 9.27, "lon": -79.92},
         "Pedro Miguel": {"lat": 9.015, "lon": -79.62},
@@ -1104,23 +1120,26 @@ def crear_mapa_3d(df):
             y=[coords["lat"]],
             z=[2],
             mode="markers+text",
-            marker=dict(size=10, color="red", symbol="diamond"),
+            marker=dict(size=12, color="red", symbol="diamond"),
             text=[f"⚙️ {nombre}"],
             textposition="top center",
-            name=f"⚙️ {nombre}"
+            name=f"⚙️ {nombre}",
+            hovertemplate=f"<b>⚙️ Esclusa de {nombre}</b><extra></extra>"
         ))
     
     fig.update_layout(
-        title="🌍 Mapa 3D del Canal",
+        title="🌍 Mapa 3D del Canal de Panamá",
         scene=dict(
             xaxis=dict(title="Longitud", range=[-80.0, -79.5]),
             yaxis=dict(title="Latitud", range=[8.85, 9.40]),
-            zaxis=dict(title="Velocidad", range=[0, 8]),
-            camera=dict(eye=dict(x=0.5, y=0.5, z=1.8))
+            zaxis=dict(title="Velocidad (nudos)", range=[0, 8]),
+            camera=dict(eye=dict(x=0.5, y=0.5, z=1.8)),
+            bgcolor="rgba(0,0,0,0)"
         ),
         height=550,
         margin=dict(r=0, l=0, b=0, t=30),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02)
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hoverlabel=dict(bgcolor="white", font_size=12)
     )
     
     return fig
@@ -1461,7 +1480,7 @@ with tab1:
     
     # Crear mapa según tipo seleccionado
     if tipo_mapa == "2D Interactivo":
-        fig = crear_mapa_2d(df, estilo_mapa if 'estilo_mapa' in locals() else "🌍 Satélite")
+        fig = crear_mapa_2d(df, estilo_mapa)
         st.plotly_chart(fig, use_container_width=True)
     else:
         fig_3d = crear_mapa_3d(df)
