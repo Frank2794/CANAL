@@ -795,7 +795,7 @@ class SistemaCompleto:
         }
 
 # ==========================================
-# GENERAR DATOS - COMPLETO CON TODAS LAS COLUMNAS
+# GENERAR DATOS - COMPLETO
 # ==========================================
 
 @st.cache_data(ttl=30)
@@ -979,7 +979,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # KPIs del sidebar
     col1, col2 = st.columns(2)
     col1.metric("🚢 Barcos", stats["total"])
     col2.metric("⏱️ CWT", f"{stats['cwt']:.1f}h")
@@ -1008,7 +1007,7 @@ with st.sidebar:
             st.rerun()
 
 # ==========================================
-# CONTENIDO PRINCIPAL - COMPLETO
+# CONTENIDO PRINCIPAL
 # ==========================================
 
 st.markdown('<div class="main-header">🧠 ANAYANSI - IA Cognitiva</div>', unsafe_allow_html=True)
@@ -1070,7 +1069,7 @@ col5.metric("🌊 Oleaje", f"{stats['oleaje']:.1f}m")
 st.markdown("---")
 
 # ==========================================
-# PREDICCIONES Y RECOMENDACIONES
+# PREDICCIONES Y CONGESTIÓN
 # ==========================================
 
 col1, col2 = st.columns(2)
@@ -1112,7 +1111,7 @@ with col2:
 st.markdown("---")
 
 # ==========================================
-# ESLUSCAS - COMPLETO
+# ESLUSCAS
 # ==========================================
 
 c1, c2, c3 = st.columns(3)
@@ -1133,14 +1132,23 @@ for col, (nombre, datos) in zip([c1, c2, c3], stats["esclusas"].items()):
 st.markdown("---")
 
 # ==========================================
-# PESTAÑAS
+# PESTAÑAS - 7 PESTAÑAS COMPLETAS
 # ==========================================
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "🗺️ Mapa", "📊 Análisis", "💬 Chat IA", "🧠 Decisiones IA", "📈 Insights", "⚙️ Configuración IA"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "🗺️ Mapa",
+    "📊 Análisis",
+    "💬 Chat IA",
+    "🧠 Decisiones IA",
+    "📈 Insights",
+    "⚙️ Configuración IA",
+    "📋 Datos Completos"
 ])
 
+# ==========================================
 # TAB 1: MAPA
+# ==========================================
+
 with tab1:
     st.markdown("### 🗺️ Mapa de Navegación")
     st.caption("🟢 Barcos con prioridad baja | 🟡 Media | 🔴 Alta | 🔺 Esclusas")
@@ -1158,7 +1166,10 @@ with tab1:
     with col3:
         st.metric("🔴 Prioridad Alta", stats["prioridad_alta"])
 
+# ==========================================
 # TAB 2: ANÁLISIS
+# ==========================================
+
 with tab2:
     st.markdown("### 📊 Análisis")
     
@@ -1181,7 +1192,7 @@ with tab2:
         st.markdown("#### 📊 Distribución por Dirección")
         dir_df = df["direccion"].value_counts().reset_index()
         dir_df.columns = ["Dirección", "Cantidad"]
-        fig3 = px.bar(dir_df, x="Dirección", y="Cantidad", color="Dirección", 
+        fig3 = px.bar(dir_df, x="Dirección", y="Cantidad", color="Dirección",
                       color_discrete_map={"Norte": "#10b981", "Sur": "#3b82f6"})
         fig3.update_layout(height=300)
         st.plotly_chart(fig3, use_container_width=True)
@@ -1194,7 +1205,10 @@ with tab2:
         fig4.update_layout(height=300)
         st.plotly_chart(fig4, use_container_width=True)
 
+# ==========================================
 # TAB 3: CHAT IA
+# ==========================================
+
 with tab3:
     st.markdown("### 💬 Chat con Anayansi")
     st.caption("💡 Pregunta sobre decisiones, predicciones o estado del sistema")
@@ -1248,7 +1262,10 @@ with tab3:
         ]
         st.rerun()
 
+# ==========================================
 # TAB 4: DECISIONES IA
+# ==========================================
+
 with tab4:
     st.markdown("### 🧠 Decisiones de la IA")
     
@@ -1276,7 +1293,10 @@ with tab4:
     else:
         st.info("Aún no hay decisiones registradas. Procesa una operación para comenzar.")
 
+# ==========================================
 # TAB 5: INSIGHTS
+# ==========================================
+
 with tab5:
     st.markdown("### 📈 Insights y Patrones")
     
@@ -1306,7 +1326,10 @@ with tab5:
     col3.metric("🔔 Alertas", sistema.metricas_sistema["alertas_generadas"])
     col4.metric("⚡ Eficiencia", f"{sistema.metricas_sistema['optimizaciones_realizadas']}")
 
-# TAB 6: CONFIGURACIÓN IA - CORREGIDA
+# ==========================================
+# TAB 6: CONFIGURACIÓN IA
+# ==========================================
+
 with tab6:
     st.markdown("### ⚙️ Configuración de la IA")
     
@@ -1356,6 +1379,105 @@ with tab6:
         st.success("✅ Umbrales actualizados correctamente")
 
 # ==========================================
+# TAB 7: DATOS COMPLETOS - RECUPERADA
+# ==========================================
+
+with tab7:
+    st.markdown("### 📋 Datos Completos de Barcos")
+    st.caption("Información detallada de todos los barcos activos en el Canal")
+    
+    # Mostrar todos los datos con todas las columnas
+    display_df = df[["nombre", "direccion", "tipo", "estado", "esclusa", "velocidad", "eta_horas", "prioridad", "eslora", "calado", "carga"]].copy()
+    display_df["velocidad"] = display_df["velocidad"].round(1)
+    display_df["eta_horas"] = display_df["eta_horas"].round(1)
+    display_df["eslora"] = display_df["eslora"].round(0)
+    display_df["calado"] = display_df["calado"].round(1)
+    display_df["carga"] = display_df["carga"].round(0)
+    display_df["direccion"] = display_df["direccion"].apply(lambda x: "⬆️ Norte" if x == "Norte" else "⬇️ Sur")
+    display_df.columns = ["Nombre", "Dirección", "Tipo", "Estado", "Esclusa", "Velocidad", "ETA (h)", "Prioridad", "Eslora (m)", "Calado (m)", "Carga (t)"]
+    
+    st.dataframe(display_df, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Estadísticas de la tabla
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("🚢 Total barcos", len(df))
+    with col2:
+        st.metric("📊 Tipos diferentes", len(df["tipo"].unique()))
+    with col3:
+        st.metric("⚙️ Esclusas", len(df["esclusa"].unique()))
+    with col4:
+        st.metric("📈 Velocidad promedio", f"{df['velocidad'].mean():.1f} nudos")
+    
+    st.markdown("---")
+    
+    # Filtros
+    st.markdown("#### 🔍 Filtros")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        filtro_direccion = st.multiselect(
+            "Dirección",
+            options=["Norte", "Sur"],
+            default=["Norte", "Sur"]
+        )
+    with col2:
+        filtro_estado = st.multiselect(
+            "Estado",
+            options=["Navegando", "En espera", "Entrando"],
+            default=["Navegando", "En espera", "Entrando"]
+        )
+    with col3:
+        filtro_prioridad = st.multiselect(
+            "Prioridad",
+            options=["Alta", "Media", "Baja"],
+            default=["Alta", "Media", "Baja"]
+        )
+    
+    # Aplicar filtros
+    df_filtrado = df[df["direccion"].isin(filtro_direccion)]
+    df_filtrado = df_filtrado[df_filtrado["estado"].isin(filtro_estado)]
+    df_filtrado = df_filtrado[df_filtrado["prioridad"].isin(filtro_prioridad)]
+    
+    if not df_filtrado.empty:
+        display_df_filtrado = df_filtrado[["nombre", "direccion", "tipo", "estado", "esclusa", "velocidad", "eta_horas", "prioridad", "eslora", "calado", "carga"]].copy()
+        display_df_filtrado["velocidad"] = display_df_filtrado["velocidad"].round(1)
+        display_df_filtrado["eta_horas"] = display_df_filtrado["eta_horas"].round(1)
+        display_df_filtrado["eslora"] = display_df_filtrado["eslora"].round(0)
+        display_df_filtrado["calado"] = display_df_filtrado["calado"].round(1)
+        display_df_filtrado["carga"] = display_df_filtrado["carga"].round(0)
+        display_df_filtrado["direccion"] = display_df_filtrado["direccion"].apply(lambda x: "⬆️ Norte" if x == "Norte" else "⬇️ Sur")
+        display_df_filtrado.columns = ["Nombre", "Dirección", "Tipo", "Estado", "Esclusa", "Velocidad", "ETA (h)", "Prioridad", "Eslora (m)", "Calado (m)", "Carga (t)"]
+        
+        st.dataframe(display_df_filtrado, use_container_width=True)
+    else:
+        st.info("No hay barcos que coincidan con los filtros seleccionados")
+    
+    st.markdown("---")
+    
+    # Exportar datos
+    st.markdown("#### 📥 Exportar Datos")
+    col1, col2 = st.columns(2)
+    with col1:
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Descargar todos los datos (CSV)",
+            data=csv,
+            file_name=f"datos_canal_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
+    with col2:
+        if not df_filtrado.empty:
+            csv_filtrado = df_filtrado.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Descargar datos filtrados (CSV)",
+                data=csv_filtrado,
+                file_name=f"datos_filtrados_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv"
+            )
+
+# ==========================================
 # FOOTER
 # ==========================================
 
@@ -1364,5 +1486,7 @@ st.markdown("""
     🧠 ANAYANSI - IA Cognitiva v3.0 | Sistema de Optimización Operativa Autónoma
     <br>
     <span style="color:#475569;">🤖 Modo: </span><span style="color:#00b4d8;">{}</span>
+    <br>
+    <span style="color:#475569;">🚢 Barcos: {} | 📊 Datos completos | ⚙️ IA Cognitiva</span>
 </div>
-""".format(sistema.modo_operativo.upper()), unsafe_allow_html=True)
+""".format(sistema.modo_operativo.upper(), stats["total"]), unsafe_allow_html=True)
