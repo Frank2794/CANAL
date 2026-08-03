@@ -177,7 +177,6 @@ class AnayansiIA:
             velocidades = [b["velocidad"] for b in self.historial_barcos[-20:]]
             if len(velocidades) > 2:
                 try:
-                    # Regresión simple
                     x = range(len(velocidades))
                     n = len(x)
                     sum_x = sum(x)
@@ -758,9 +757,10 @@ def crear_grafico_evolucion(historial):
     return None
 
 # ==========================================
-# INICIALIZAR
+# INICIALIZAR - CORREGIDO
 # ==========================================
 
+# Inicializar todas las variables de sesión
 if "anayansi" not in st.session_state:
     st.session_state.anayansi = AnayansiIA()
     st.session_state.anayansi.cargar_estado()
@@ -781,7 +781,7 @@ df = st.session_state.df
 stats = st.session_state.stats
 
 # ==========================================
-# APLICAR TEMA
+# APLICAR TEMA - CORREGIDO
 # ==========================================
 
 aplicar_tema(st.session_state.tema)
